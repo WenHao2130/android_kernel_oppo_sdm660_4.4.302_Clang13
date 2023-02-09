@@ -2372,51 +2372,6 @@ int task_cgroup_path(struct task_struct *task, char *buf, size_t buflen)
 }
 EXPORT_SYMBOL_GPL(task_cgroup_path);
 
-#ifdef VENDOR_EDIT
-//zhoumingjun@Swdp.shanghai, 2018/07/10, get task cgroup path by root name for elsa
-//huangliang@Swdp.shanghai, 2018/07/23, porting from 4.9 to 4.4 for elsa
-char* task_cgroup_path_by_root(struct task_struct *task, const char *rootname,  char *buf, size_t buflen)
-{
-	struct cgroup_root *root;
-	struct cgroup *cgrp;
-	bool root_found = false;
-	struct cgroup_subsys *ss;
-	int ssid, rootssid = -1;
-	char* path = NULL;
-
-	mutex_lock(&cgroup_mutex);
-	spin_lock_irq(&css_set_lock);
-
-	/* find root subsys id by name */
-	for_each_subsys(ss, ssid) {
-		if (!strcmp(ss->legacy_name, rootname)) {
-			rootssid = ssid;
-			break;
-		}
-	}
-
-	if (rootssid >= 0) {
-		for_each_root(root) {
-			if (root && (root->subsys_mask & (1 << rootssid))) {
-				cgrp = task_cgroup_from_root(task, root);
-				path = cgroup_path(cgrp, buf, buflen);
-				root_found = true;
-				break;
-			}
-		}
-	}
-
-	if (!root_found){
-	    if (strlcpy(buf, "/", buflen) < buflen)
-		path = buf;
-	}
-	spin_unlock_irq(&css_set_lock);
-	mutex_unlock(&cgroup_mutex);
-	return path;
-}
-EXPORT_SYMBOL_GPL(task_cgroup_path_by_root);
-#endif
-
 /* used to track tasks and other necessary states during migration */
 struct cgroup_taskset {
 	/* the src and dst cset list running through cset->mg_node */

@@ -3,7 +3,7 @@
 
 #include <linux/of.h>
 
-#include "../../../../kernel/msm-4.4/drivers/power/supply/qcom/smb-lib.h"
+#include "../../supply/qcom/smb-lib.h"
 
 //extern struct oppo_chg_operations  smb2_chg_ops;
 

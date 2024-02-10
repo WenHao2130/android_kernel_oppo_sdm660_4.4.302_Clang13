@@ -9,7 +9,6 @@ msm_kgsl_core-y = \
 	kgsl_pwrctrl.o \
 	kgsl_pwrscale.o \
 	kgsl_mmu.o \
-	oppo_mm_kevent_fb.o \
 	kgsl_snapshot.o \
 	kgsl_events.o \
 	kgsl_pool.o

@@ -27,7 +27,7 @@
 
 #ifdef VENDOR_EDIT
 /* Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm dcs for gpu. */
-#include <linux/oppo_mm_kevent_fb.h>
+#include <soc/oppo/oppo_kevent_feedback.h>
 #endif /*VENDOR_EDIT*/
 
 #define DRAWQUEUE_NEXT(_i, _s) (((_i) + 1) % (_s))
@@ -2113,7 +2113,7 @@ static void do_header_and_snapshot(struct kgsl_device *device,
 
     if (snapshotpid != pid) {
         scnprintf(payload, sizeof(payload), "EventID@@%d$$GPU_fault@@fault=%x,pid=%d,name=%s",OPPO_MM_DIRVER_FB_EVENT_ID_GPU_FAULT, snapshotfault, pid, processname);
-        upload_mm_kevent_fb_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);//gpu hang
+        upload_mm_kevent_feedback_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);//gpu hang
         snapshotpid = pid;
 	}
 #endif /*VENDOR_EDIT*/
@@ -2437,7 +2437,7 @@ static void _adreno_dispatch_check_timeout(struct adreno_device *adreno_dev,
 
     if (snapshotpid != pid) {
         scnprintf(payload, sizeof(payload), "EventID@@%d$$GPU_fault@@fault=2,pid=%d,name=%s",OPPO_MM_DIRVER_FB_EVENT_ID_GPU_FAULT, pid, processname);
-        upload_mm_kevent_fb_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);//gpu timeout
+        upload_mm_kevent_feedback_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);//gpu timeout
         snapshotpid = pid;
 	}
 #endif /*VENDOR_EDIT*/

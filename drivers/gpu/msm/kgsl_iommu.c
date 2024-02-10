@@ -44,7 +44,7 @@
 
 #ifdef VENDOR_EDIT
 /* Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm dcs for gpu. */
-#include <linux/oppo_mm_kevent_fb.h>
+#include <soc/oppo/oppo_kevent_feedback.h>
 #endif /*VENDOR_EDIT*/
 
 #define _IOMMU_PRIV(_mmu) (&((_mmu)->priv.iommu))

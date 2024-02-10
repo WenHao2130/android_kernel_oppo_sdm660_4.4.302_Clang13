@@ -41,7 +41,7 @@
 #endif /* VENDOR_EDIT */
 #ifdef VENDOR_EDIT
 /* Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm dcs for gpu. */
-#include <linux/oppo_mm_kevent_fb.h>
+#include <soc/oppo/oppo_kevent_feedback.h>
 #endif /*VENDOR_EDIT*/
 
 /*
@@ -186,7 +186,7 @@ static void syncobj_timer(unsigned long data)
 #ifdef VENDOR_EDIT
 /* Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm kevent gpu. */
 		scnprintf(payload, sizeof(payload), "EventID@@%d$$GPU_fault@@syncpoint deadlock",OPPO_MM_DIRVER_FB_EVENT_ID_GPU_FENCE_TIMEOUT);
-		upload_mm_kevent_fb_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);
+		upload_mm_kevent_feedback_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);
 #endif /*VENDOR_EDIT*/
 	dev_err(device->dev, "--gpu syncpoint deadlock print end--\n");
 }

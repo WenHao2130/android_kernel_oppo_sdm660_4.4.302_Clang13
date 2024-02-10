@@ -1307,7 +1307,14 @@ static void *def_msm_int_wcd_mbhc_cal(void)
 		return NULL;
 
 #define S(X, Y) ((WCD_MBHC_CAL_PLUG_TYPE_PTR(msm_int_wcd_cal)->X) = (Y))
+#ifndef VENDOR_EDIT
+/*xiang.fei@PSW.MM.AudioDriver.HeadsetDet, 2017/03/06,
+ *Modify for headset detect.
+ */
 	S(v_hs_max, 1500);
+#else /* VENDOR_EDIT */
+	S(v_hs_max, 1700);
+#endif
 #undef S
 #define S(X, Y) ((WCD_MBHC_CAL_BTN_DET_PTR(msm_int_wcd_cal)->X) = (Y))
 	S(num_btn, WCD_MBHC_DEF_BUTTONS);
@@ -1330,6 +1337,10 @@ static void *def_msm_int_wcd_mbhc_cal(void)
 	 * 210-290 == Button 2
 	 * 360-680 == Button 3
 	 */
+#ifndef VENDOR_EDIT
+/*xiang.fei@PSW.MM.AudioDriver.HeadsetDet, 2017/03/03,
+ *Modify for headset button threshold.
+ */
 	btn_low[0] = 75;
 	btn_high[0] = 75;
 	btn_low[1] = 150;
@@ -1340,6 +1351,20 @@ static void *def_msm_int_wcd_mbhc_cal(void)
 	btn_high[3] = 450;
 	btn_low[4] = 500;
 	btn_high[4] = 500;
+#else /* VENDOR_EDIT */
+	/* Ming.Liu@PSW.MM.AudioDriver.HeadsetDet, 2017/07/12, Modify for
+		supporting line control earphone volume key up/down */
+	btn_low[0] = 60;		/* Hook ,0 ~ 160 Ohm*/
+	btn_high[0] = 130;
+	btn_low[1] = 131;
+	btn_high[1] = 131;
+	btn_low[2] = 253;		/* Volume + ,160 ~ 360 Ohm*/
+	btn_high[2] = 253;
+	btn_low[3] = 425;		/* Volume - ,360 ~ 680 Ohm*/
+	btn_high[3] = 425;
+	btn_low[4] = 426;
+	btn_high[4] = 426;
+#endif /* VENDOR_EDIT */
 
 	return msm_int_wcd_cal;
 }
@@ -1690,6 +1715,29 @@ static int msm_snd_card_late_probe(struct snd_soc_card *card)
 	return ret;
 }
 
+#ifdef VENDOR_EDIT
+/* Jianfeng.Qiu@PSW.MM.AudioDriver.HeadsetDAC 2015/06/03,
+ * Add for no sound when ap suspend in call.
+ */
+static int ak4376_audrx_init(struct snd_soc_pcm_runtime *rtd)
+{
+	struct snd_soc_codec *codec = rtd->codec;
+	struct snd_soc_dapm_context *dapm = snd_soc_codec_get_dapm(codec);//&codec->dapm;
+	struct snd_soc_dai *cpu_dai = rtd->cpu_dai;
+
+	pr_err("%s(),dev_name%s\n", __func__, dev_name(cpu_dai->dev));
+
+	snd_soc_dapm_ignore_suspend(dapm, "AK4376 HPL");
+	snd_soc_dapm_ignore_suspend(dapm, "AK4376 HPR");
+	/*xiang.fei@PSW.MM.AudioDriver.HeadsetDAC, 2017/03/19, Add for kernel 4.4*/
+	snd_soc_dapm_ignore_suspend(dapm, "Playback");
+
+	snd_soc_dapm_sync(dapm);
+
+	return 0;
+}
+#endif /* VENDOR_EDIT */
+
 static struct snd_soc_ops msm_tdm_be_ops = {
 	.hw_params = msm_tdm_snd_hw_params
 };
@@ -1933,6 +1981,10 @@ static struct snd_soc_dai_link msm_int_dai[] = {
 		.cpu_dai_name = "INT3_MI2S_TX_HOSTLESS",
 		.platform_name = "msm-pcm-hostless",
 		.dynamic = 1,
+		#ifdef VENDOR_EDIT
+		/*Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/02/20, Add for MMI test*/
+		.dpcm_playback = 1,
+		#endif /* VENDOR_EDIT */
 		.dpcm_capture = 1,
 		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
 			    SND_SOC_DPCM_TRIGGER_POST},
@@ -2425,6 +2477,29 @@ static struct snd_soc_dai_link msm_int_wsa_dai[] = {
 	},
 };
 
+#ifdef VENDOR_EDIT
+/*Jianfeng.Qiu@PSW.MM.AudioDriver.SmartPA, 2017/02/06, Add for maxim dsm*/
+static struct snd_soc_dai_link maxim_fe_dai[] = {
+	{/* hw:x,40 */
+		.name = "Secondary MI2S_TX Hostless",
+		.stream_name = "Secondary MI2S_TX Hostless",
+		.cpu_dai_name = "SEC_MI2S_TX_HOSTLESS",
+		.platform_name	= "msm-pcm-hostless",
+		.dynamic = 1,
+		.dpcm_capture = 1,
+		.trigger = {SND_SOC_DPCM_TRIGGER_POST,
+			SND_SOC_DPCM_TRIGGER_POST},
+		.no_host_mode = SND_SOC_DAI_LINK_NO_HOST,
+		.ignore_suspend = 1,
+		 /* this dailink has playback support */
+		.ignore_pmdown_time = 1,
+		/* This dainlink has MI2S support */
+		.codec_dai_name = "snd-soc-dummy-dai",
+		.codec_name = "snd-soc-dummy",
+	},
+};
+#endif /* VENDOR_EDIT */
+
 static struct snd_soc_dai_link msm_int_be_dai[] = {
 	/* Backend I2S DAI Links */
 	{
@@ -2700,6 +2775,119 @@ static struct snd_soc_dai_link msm_int_be_dai[] = {
 		.ignore_suspend = 1,
 	},
 };
+
+#ifdef VENDOR_EDIT
+/*Jianfeng.Qiu@PSW.MM.AudioDriver.SmartPA, 2017/01/23, Add for maxim*/
+static int maxim_be_hw_params_fixup(struct snd_soc_pcm_runtime *rtd,
+				  struct snd_pcm_hw_params *params)
+{
+	struct snd_interval *rate = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_RATE);
+	struct snd_interval *channels = hw_param_interval(params,
+					SNDRV_PCM_HW_PARAM_CHANNELS);
+
+	rate->min = rate->max = 48000;
+	channels->min = channels->max = 2;
+
+	return 0;
+}
+
+static struct snd_soc_dai_link maxim_be_dai_links[] = {
+	{
+		.name = LPASS_BE_SEC_MI2S_RX,
+		.stream_name = "Secondary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.1",
+		.platform_name = "msm-pcm-routing",
+		.codec_dai_name = "max98927-aif1",
+		.codec_name = "max98927",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_RX,
+		.be_hw_params_fixup = msm_common_be_hw_params_fixup,
+		.ops = &msm_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+	},
+	{
+		.name = LPASS_BE_SEC_MI2S_TX,
+		.stream_name = "Secondary MI2S Capture",
+		.cpu_dai_name = "msm-dai-q6-mi2s.1",
+		.platform_name = "msm-pcm-routing",
+		.codec_dai_name = "max98927-aif1",
+		.codec_name = "max98927",
+		.no_pcm = 1,
+		.dpcm_capture = 1,
+		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_TX,
+		.be_hw_params_fixup = maxim_be_hw_params_fixup,
+		.ops = &msm_mi2s_be_ops,
+		.ignore_suspend = 1,
+	},
+};
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+/* Jianfeng.Qiu@PSW.MM.AudioDriver.HeadsetDAC, 2017/09/21, Add for ak43xx */
+static struct snd_soc_dai_link ak43xx_be_dai_links[] = {
+	{
+		.name = LPASS_BE_PRI_MI2S_RX,
+		.stream_name = "Primary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.0",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "ak4376.6-0010",
+		.codec_dai_name = "ak4376-AIF1",
+		.init = ak4376_audrx_init,
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_PRI_MI2S_RX,
+		.be_hw_params_fixup = msm_common_be_hw_params_fixup,
+		.ops = &msm_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+	},
+};
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+/* Jianfeng.Qiu@PSW.MM.AudioDriver.SmartPA, 2017/09/21, Add for tfa98xx */
+static struct snd_soc_dai_link tfa98xx_be_dai_links[] = {
+	{
+		.name = LPASS_BE_SEC_MI2S_RX,
+		.stream_name = "Secondary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.1",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "tfa98xx.6-0036",
+		.codec_dai_name = "tfa98xx-aif-6-36",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_RX,
+		.be_hw_params_fixup = msm_common_be_hw_params_fixup,
+		.ops = &msm_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+	},
+};
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+/* Jianfeng.Qiu@PSW.MM.AudioDriver.SmartPA, 2018/05/24, Add for tfa9894 */
+static struct snd_soc_dai_link tfa98xx_v6_be_dai_links[] = {
+	{
+		.name = LPASS_BE_SEC_MI2S_RX,
+		.stream_name = "Secondary MI2S Playback",
+		.cpu_dai_name = "msm-dai-q6-mi2s.1",
+		.platform_name = "msm-pcm-routing",
+		.codec_name = "tfa98xx.6-0035",
+		.codec_dai_name = "tfa98xx-aif-6-35",
+		.no_pcm = 1,
+		.dpcm_playback = 1,
+		.be_id = MSM_BACKEND_DAI_SECONDARY_MI2S_RX,
+		.be_hw_params_fixup = msm_common_be_hw_params_fixup,
+		.ops = &msm_mi2s_be_ops,
+		.ignore_suspend = 1,
+		.ignore_pmdown_time = 1,
+	},
+};
+#endif /* VENDOR_EDIT */
 
 static struct snd_soc_dai_link msm_mi2s_be_dai_links[] = {
 	{
@@ -3036,6 +3224,8 @@ static struct snd_soc_dai_link ext_disp_be_dai_link[] = {
 	},
 };
 
+#ifndef VENDOR_EDIT
+/*Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/02/06, Modify for maxim*/
 static struct snd_soc_dai_link msm_int_dai_links[
 ARRAY_SIZE(msm_int_dai) +
 ARRAY_SIZE(msm_int_wsa_dai) +
@@ -3045,6 +3235,18 @@ ARRAY_SIZE(msm_auxpcm_be_dai_links)+
 ARRAY_SIZE(msm_wcn_be_dai_links) +
 ARRAY_SIZE(msm_wsa_be_dai_links) +
 ARRAY_SIZE(ext_disp_be_dai_link)];
+#else /* VENDOR_EDIT */
+static struct snd_soc_dai_link msm_int_dai_links[
+ARRAY_SIZE(msm_int_dai) +
+ARRAY_SIZE(msm_int_wsa_dai) +
+ARRAY_SIZE(msm_int_be_dai) +
+ARRAY_SIZE(msm_mi2s_be_dai_links) +
+ARRAY_SIZE(msm_auxpcm_be_dai_links)+
+ARRAY_SIZE(msm_wcn_be_dai_links) +
+ARRAY_SIZE(msm_wsa_be_dai_links) +
+ARRAY_SIZE(ext_disp_be_dai_link) +
+ARRAY_SIZE(maxim_fe_dai)];
+#endif /* VENDOR_EDIT */
 
 static struct snd_soc_card sdm660_card = {
 	/* snd_soc_card_sdm660 */
@@ -3106,6 +3308,17 @@ static struct snd_soc_card *msm_int_populate_sndcard_dailinks(
 	struct snd_soc_dai_link *dailink;
 	int len1;
 
+	#ifdef VENDOR_EDIT
+	/* Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/01/23,
+	 * Add for custom audio.
+	 */
+	int i;
+	const char *product_name = NULL;
+	const char *oppo_speaker_type = "oppo,speaker-pa";
+	const char *oppo_headphone_type = "oppo,headphone-pa";
+	struct snd_soc_dai_link *temp_link;
+	#endif /* VENDOR_EDIT */
+
 	card->name = dev_name(dev);
 	len1 = ARRAY_SIZE(msm_int_dai);
 	memcpy(msm_int_dai_links, msm_int_dai, sizeof(msm_int_dai));
@@ -3117,11 +3330,71 @@ static struct snd_soc_card *msm_int_populate_sndcard_dailinks(
 		       sizeof(msm_int_wsa_dai));
 		len1 += ARRAY_SIZE(msm_int_wsa_dai);
 	}
+
+	#ifdef VENDOR_EDIT
+	/*Jianfeng.Qiu@PSW.MM.AudioDriver.Codec, 2017/02/06, Add for maxim dsm*/
+	if (!of_property_read_string(dev->of_node, oppo_speaker_type, &product_name)) {
+		if (!strcmp(product_name, "maxim")) {
+			memcpy(dailink + len1,
+				maxim_fe_dai,
+				sizeof(maxim_fe_dai));
+			len1 += ARRAY_SIZE(maxim_fe_dai);
+		}
+	}
+	#endif /* VENDOR_EDIT */
+
 	memcpy(dailink + len1, msm_int_be_dai, sizeof(msm_int_be_dai));
 	len1 += ARRAY_SIZE(msm_int_be_dai);
 
 	if (of_property_read_bool(dev->of_node,
 				  "qcom,mi2s-audio-intf")) {
+		#ifdef VENDOR_EDIT
+		/* Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/01/23,
+		 * Add for custom audio.
+		 */
+		if (!of_property_read_string(dev->of_node, oppo_headphone_type,
+				&product_name)) {
+			pr_info("%s: custom headphone product %s\n", __func__, product_name);
+			for (i = 0; i < ARRAY_SIZE(msm_mi2s_be_dai_links); i++) {
+				temp_link = &msm_mi2s_be_dai_links[i];
+				if (temp_link->be_id == MSM_BACKEND_DAI_PRI_MI2S_RX) {
+					if (!strcmp(product_name, "akm")) {
+						memcpy(temp_link, &ak43xx_be_dai_links[0],
+							sizeof(ak43xx_be_dai_links[0]));
+						break;
+					}
+				}
+			}
+		}
+
+		if (!of_property_read_string(dev->of_node, oppo_speaker_type,
+				&product_name)) {
+			pr_info("%s: custom speaker product %s\n", __func__, product_name);
+			for (i = 0; i < ARRAY_SIZE(msm_mi2s_be_dai_links); i++) {
+				temp_link = &msm_mi2s_be_dai_links[i];
+				if (temp_link->be_id == MSM_BACKEND_DAI_SECONDARY_MI2S_RX) {
+					if (!strcmp(product_name, "nxp")) {
+						memcpy(temp_link, &tfa98xx_be_dai_links[0],
+							sizeof(tfa98xx_be_dai_links[0]));
+						break;
+					} else if (!strcmp(product_name, "maxim")) {
+						memcpy(temp_link, &maxim_be_dai_links[0],
+							sizeof(maxim_be_dai_links[0]));
+					} else if (!strcmp(product_name, "nxp-v6")) {
+						memcpy(temp_link, &tfa98xx_v6_be_dai_links[0],
+							sizeof(tfa98xx_v6_be_dai_links[0]));
+						break;
+					}
+				} else if (temp_link->be_id == MSM_BACKEND_DAI_SECONDARY_MI2S_TX) {
+					if (!strcmp(product_name, "maxim")) {
+						memcpy(temp_link, &maxim_be_dai_links[1],
+							sizeof(maxim_be_dai_links[1]));
+					}
+				}
+			}
+		}
+		#endif /* VENDOR_EDIT */
+
 		memcpy(dailink + len1,
 		       msm_mi2s_be_dai_links,
 		       sizeof(msm_mi2s_be_dai_links));

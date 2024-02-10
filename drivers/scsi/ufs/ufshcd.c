@@ -5611,7 +5611,6 @@ static void __ufshcd_transfer_req_compl(struct ufs_hba *hba,
 					lrbp, cmd->request);
 			}
 
-			clear_bit_unlock(index, &hba->lrb_in_use);
 			req = cmd->request;
 			if (req) {
 				/* Update IO svc time latency histogram */
@@ -9754,6 +9753,16 @@ static ssize_t ufshcd_clkscale_enable_store(struct device *dev,
 out:
 	return count;
 }
+
+#ifdef VENDOR_EDIT
+//cuixiaogang@SRC.hypnus.2018.04.02. add support for ufs clk scale
+int ufshcd_clk_scaling_enable(struct ufs_hba *hba, int val)
+{
+	/* Todo */
+	return 0;
+}
+EXPORT_SYMBOL(ufshcd_clk_scaling_enable);
+#endif
 
 static void ufshcd_clk_scaling_suspend_work(struct work_struct *work)
 {

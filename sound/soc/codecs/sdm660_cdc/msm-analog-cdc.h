@@ -215,6 +215,12 @@ struct sdm660_cdc_priv {
 	/* Entry for version info */
 	struct snd_info_entry *entry;
 	struct snd_info_entry *version_entry;
+	#ifdef VENDOR_EDIT
+	/*Jianfeng.Qiu@PSW.MM.AudioDriver.Codec, 2017/05/12,
+	 *Add for set mode for pm660l_bob regulator.
+	 */
+	unsigned int bob_mode;
+	#endif /* VENDOR_EDIT */
 };
 
 struct sdm660_cdc_pdata {

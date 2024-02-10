@@ -198,6 +198,12 @@ struct inet_timewait_sock *inet_twsk_alloc(const struct sock *sk,
 		atomic_set(&tw->tw_refcnt, 0);
 
 		__module_get(tw->tw_prot->owner);
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//add for count TCP_TIME_WAIT state to corresponding process
+		tw->tw_uid = sk->skc_uid;
+		strncpy(tw->tw_cmdline, sk->sk_cmdline, TASK_COMM_LEN);
+#endif /* VENDOR_EDIT */
 	}
 
 	return tw;

@@ -290,10 +290,34 @@ void smpboot_park_threads(unsigned int cpu)
 {
 	struct smp_hotplug_thread *cur;
 
+#ifdef VENDOR_EDIT
+	//Haitao.Zhou@BSP.Kernel.Stablity, 2017/03/13, Modify for merge the kernel stablity checklist
+	struct task_struct *tsk;
+	int cnt;
+#endif /* VENDOR_EDIT */
+
 	mutex_lock(&smpboot_threads_lock);
 	list_for_each_entry_reverse(cur, &hotplug_threads, list)
 		smpboot_park_thread(cur, cpu);
 	mutex_unlock(&smpboot_threads_lock);
+
+#ifdef VENDOR_EDIT
+next:
+	//Haitao.Zhou@BSP.Kernel.Stablity, 2017/03/13, Modify for merge the kernel stablity checklist
+	cnt = 0;
+	list_for_each_entry(cur, &hotplug_threads, list) {
+		tsk = *per_cpu_ptr(cur->store, cpu);
+		cnt += tsk->on_rq;
+	}
+	if (cnt) {
+		if (cpu == raw_smp_processor_id()) {
+			set_current_state(TASK_INTERRUPTIBLE);
+			schedule_timeout(1);
+		}
+		goto next;
+	}
+#endif /* VENDOR_EDIT */
+
 }
 
 static void smpboot_destroy_threads(struct smp_hotplug_thread *ht)

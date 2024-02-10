@@ -602,7 +602,7 @@ static long msm_vfe44_reset_hardware(struct vfe_device *vfe_dev,
 		vfe_dev->hw_info->vfe_ops.axi_ops.
 			reload_wm(vfe_dev, vfe_dev->vfe_base, 0x0031FFFF);
 	}
-
+#ifndef VENDOR_EDIT
 	if (blocking_call) {
 		rc = wait_for_completion_timeout(
 			&vfe_dev->reset_complete, msecs_to_jiffies(50));
@@ -612,7 +612,17 @@ static long msm_vfe44_reset_hardware(struct vfe_device *vfe_dev,
 			vfe_dev->reset_pending = 0;
 		}
 	}
-
+#else
+	if (blocking_call) {
+		rc = wait_for_completion_timeout(
+			&vfe_dev->reset_complete, msecs_to_jiffies(500));
+		if (rc <= 0) {
+			pr_err("%s:%d failed: reset timeout\n", __func__,
+				__LINE__);
+			vfe_dev->reset_pending = 0;
+		}
+	}
+#endif
 	return rc;
 }
 

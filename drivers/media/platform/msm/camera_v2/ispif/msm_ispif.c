@@ -1457,8 +1457,14 @@ static void ispif_process_irq(struct ispif_device *ispif,
 	if (out[vfe_id].ispifIrqStatus0 &
 			ISPIF_IRQ_STATUS_PIX_SOF_MASK) {
 		if (ispif->ispif_sof_debug < ISPIF_SOF_DEBUG_COUNT)
+#ifndef VENDOR_EDIT
+			/*Modify by Zhengrong.Zhang@Camera 20160813 for debug*/
 			pr_err("%s: PIX0 frame id: %u\n", __func__,
 				ispif->sof_count[vfe_id].sof_cnt[PIX0]);
+#else
+			pr_err("%s: PIX0 frame id[vfe %d]: %u\n", __func__,
+				vfe_id, ispif->sof_count[vfe_id].sof_cnt[PIX0]);
+#endif
 		ispif->sof_count[vfe_id].sof_cnt[PIX0]++;
 		ispif->ispif_sof_debug++;
 	}
@@ -1783,6 +1789,10 @@ static int msm_ispif_init(struct ispif_device *ispif,
 	if (rc)
 		goto error_ahb;
 	ispif->ispif_state = ISPIF_POWER_UP;
+#ifdef VENDOR_EDIT
+	/*Modify by Zhengrong.Zhang@Camera 20160813 for debug*/
+	ispif->ispif_sof_debug = 0;
+#endif
 	return 0;
 
 error_ahb:
@@ -1803,6 +1813,10 @@ static void msm_ispif_release(struct ispif_device *ispif)
 	if (cam_config_ahb_clk(NULL, 0, CAM_AHB_CLIENT_ISPIF,
 		CAM_AHB_SUSPEND_VOTE) < 0)
 		pr_err("%s: failed to remove vote for AHB\n", __func__);
+#ifdef VENDOR_EDIT
+	/*Modify by Zhengrong.Zhang@Camera 20160813 for debug*/
+	ispif->ispif_sof_debug = 0;
+#endif
 }
 
 static long msm_ispif_dispatch_cmd(enum ispif_cfg_type_t cmd,

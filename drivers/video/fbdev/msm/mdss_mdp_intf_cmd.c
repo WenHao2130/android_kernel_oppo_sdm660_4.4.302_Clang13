@@ -22,6 +22,11 @@
 #include "mdss_mdp_trace.h"
 #include "mdss_dsi_clk.h"
 #include <linux/interrupt.h>
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/13,
+//add for display key log
+#include <soc/oppo/mmkey_log.h>
+#endif /*VENDOR_EDIT*/
 
 #define MAX_RECOVERY_TRIALS 10
 #define MAX_SESSIONS 2
@@ -2121,6 +2126,11 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 		MDSS_XLOG(status, rc, atomic_read(&ctx->koff_cnt));
 		if (status) {
 			pr_warn("pp done but irq not triggered\n");
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@MultiMedia.Display.LCD.Stability, 2018/10/13,
+//modify for display key log
+			mm_keylog_write("mdss mdp cmd wait4pingpong exception\n", "pp done but irq not triggered\n", TYPE_VSYNC_EXCEPTION);
+#endif /*VEDNOR_EDIT*/
 			mdss_mdp_irq_clear(ctl->mdata,
 				MDSS_MDP_IRQ_TYPE_PING_PONG_COMP,
 				ctx->current_pp_num);
@@ -2161,8 +2171,17 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 			mdss_fb_report_panel_dead(ctl->mfd);
 		} else if (ctx->pp_timeout_report_cnt == 0) {
 			MDSS_XLOG(0xbad);
+			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0_ctrl", "dsi0_phy",
+				"dsi1_ctrl", "dsi1_phy", "vbif", "vbif_nrt",
+				"dbg_bus", "vbif_dbg_bus",
+				"dsi_dbg_bus", "panic");
 		} else if (ctx->pp_timeout_report_cnt == MAX_RECOVERY_TRIALS) {
 			MDSS_XLOG(0xbad2);
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/12,
+//add for display key log
+            mm_keylog_write("mdss mdp cmd wait4pingpong exception\n", "cmd kickoff timed out\n", TYPE_VSYNC_EXCEPTION);
+#endif /*VENDOR_EDIT*/
 			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0_ctrl", "dsi0_phy",
 				"dsi1_ctrl", "dsi1_phy", "vbif", "vbif_nrt",
 				"dbg_bus", "vbif_dbg_bus",
@@ -2794,6 +2813,46 @@ static void mdss_mdp_cmd_wait4_autorefresh_done(struct mdss_mdp_ctl *ctl)
 
 	MDSS_XLOG(val, 0x333);
 }
+
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Driver.feature, 2018/08/17,
+ *add for layer sync
+*/
+void oppo_wait_for_frame_start(struct mdss_mdp_ctl *ctl)
+{
+	struct mdss_mdp_cmd_ctx *ctx = (struct mdss_mdp_cmd_ctx *) ctl->intf_ctx[MASTER_CTX];
+	struct mdss_mdp_pp_tear_check *te = NULL;
+	u32 timeout_us = 3000, val = 0;
+	struct mdss_mdp_mixer *mixer;
+	char __iomem *pp_base = ctl->mixer_left->pingpong_base;
+
+	atomic_inc(&ctx->rdptr_cnt);
+	atomic_inc(&ctx->rdptr_cnt);
+	/* enable clks and rd_ptr interrupt */
+	mdss_mdp_setup_vsync(ctx, true);
+
+	mixer = mdss_mdp_mixer_get(ctx->ctl, MDSS_MDP_MIXER_MUX_LEFT);
+	if (!mixer) {
+		pr_err("%s: null mixer\n", __func__);
+		return;
+	}
+
+	/* wait for read pointer */
+	MDSS_XLOG(atomic_read(&ctx->rdptr_cnt));
+	pr_debug("%s: wait for frame cnt:%d\n",
+		__func__, atomic_read(&ctx->rdptr_cnt));
+	mdss_mdp_cmd_wait4readptr(ctx);
+
+	/* wait for 2 lines to make sure we are within the frame */
+	te = &ctx->ctl->panel_data->panel_info.te;
+	readl_poll_timeout(pp_base +
+		MDSS_MDP_REG_PP_LINE_COUNT, val,
+		(val & 0xffff) >= 2, 10, timeout_us);
+
+	/* disable rd_ptr interrupt */
+	mdss_mdp_setup_vsync(ctx, false);
+}
+#endif /*VENDOR_EDIT*/
 
 /* caller needs to hold autorefresh_lock before calling this function */
 static int mdss_mdp_disable_autorefresh(struct mdss_mdp_ctl *ctl,
@@ -3493,6 +3552,12 @@ panel_events:
 	ctl->ops.reconfigure = NULL;
 	ctl->ops.wait_for_vsync_fnc = NULL;
 
+#ifdef VENDOR_EDIT
+//Shengjun.Gou@PSW.MM.Display.LCD.Feature, 2018/01/03,
+//add for dynamic mipi dsi clk
+	ctl->ops.config_dsitiming_fnc = NULL;
+#endif /*VENDOR_EDIT*/
+
 end:
 	if (!IS_ERR_VALUE(ret)) {
 		struct mdss_mdp_cmd_ctx *sctx = NULL;
@@ -3676,6 +3741,16 @@ static int mdss_mdp_cmd_intfs_setup(struct mdss_mdp_ctl *ctl,
 			return mdss_mdp_cmd_panel_on(ctl, sctl);
 		} else {
 			pr_err("Intf %d already in use\n", session);
+
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Feature, 2018/10/13,
+//add for blank
+			pr_err("Intf %d recovery, ctx ref_cnt: %d, panel state: %d\n",
+					session,ctx->ref_cnt,ctx->panel_power_state);
+			ctx->ref_cnt = 0;
+			mdss_fb_report_panel_dead(ctl->mfd);
+#endif /*VENDOR_EDIT*/
+
 			return -EBUSY;
 		}
 	}
@@ -3821,6 +3896,39 @@ void mdss_mdp_switch_to_vid_mode(struct mdss_mdp_ctl *ctl, int prep)
 			(void *) mode, CTL_INTF_EVENT_FLAG_DEFAULT);
 }
 
+#ifdef VENDOR_EDIT
+//Shengjun.Gou@PSW.MM.Display.LCD.Feature, 2018/01/03,
+//add for dynamic mipi dsi clk
+static int mdss_mdp_cmd_config_dsitiming(struct mdss_mdp_ctl *ctl,
+			struct mdss_mdp_ctl *sctl, u32 bitrate)
+{
+	int rc = 0;
+	struct mdss_panel_data *pdata;
+
+	pdata = ctl->panel_data;
+	if (pdata == NULL) {
+		pr_err("%s: Invalid panel data\n", __func__);
+		return -EINVAL;
+	}
+	if (!pdata->panel_info.dynamic_dsitiming) {
+		pr_err("%s: Dynamic dsi timing not enabled for this panel\n",
+				__func__);
+		return -EINVAL;
+	}
+	if (mdss_mdp_ctl_is_power_off(ctl)) {
+		pr_err("%s:panel is off %d\n", __func__, ctl->power_state);
+		return 0;
+	}
+	rc = mdss_mdp_ctl_intf_event(ctl,
+			MDSS_EVENT_PANEL_UPDATE_DSI_TIMING,
+			(void *) (unsigned long) bitrate,CTL_INTF_EVENT_FLAG_DEFAULT);
+	if (rc)
+		pr_err("%s:intf %d panel dsi timing update error (%d)\n",
+			__func__, ctl->intf_num, rc);
+	return rc;
+}
+#endif /*VENDOR_EDIT*/
+
 static int mdss_mdp_cmd_reconfigure(struct mdss_mdp_ctl *ctl,
 		enum dynamic_switch_modes mode, bool prep)
 {
@@ -3913,6 +4021,13 @@ int mdss_mdp_cmd_start(struct mdss_mdp_ctl *ctl)
 	ctl->ops.update_lineptr = mdss_mdp_cmd_update_lineptr;
 	ctl->ops.panel_disable_cfg = mdss_mdp_cmd_panel_disable_cfg;
 	ctl->ops.wait_for_vsync_fnc = mdss_mdp_cmd_wait4_vsync;
+
+#ifdef VENDOR_EDIT
+//Shengjun.Gou@PSW.MM.Display.LCD.Feature, 2018/01/03,
+//add for dynamic mipi dsi clk
+	ctl->ops.config_dsitiming_fnc = mdss_mdp_cmd_config_dsitiming;
+#endif /*VENDOR_EDIT*/
+
 	pr_debug("%s:-\n", __func__);
 
 	return 0;

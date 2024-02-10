@@ -259,6 +259,72 @@ static int msm_rpm_master_copy_stats(
 	return RPM_MASTERS_BUF_LEN - count;
 }
 
+#ifdef VENDOR_EDIT
+//Yunqing.Zeng@BSP.Power.Basic 2017/11/13 add for get rpm_stats
+#define MSM_ARCH_TIMER_FREQ 19200000
+static inline u64 get_time_in_msec(u64 counter)
+{
+	do_div(counter, MSM_ARCH_TIMER_FREQ);
+	counter *= MSEC_PER_SEC;
+	return counter;
+}
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static int oppo_rpm_master_copy_stats(
+		struct msm_rpm_master_stats_private_data *prvdata)
+{
+	struct msm_rpm_master_stats record;
+	struct msm_rpm_master_stats_platform_data *pdata;
+	static int master_cnt;
+	int count;
+	char *buf;
+
+	/* Iterate possible number of masters */
+	if (master_cnt > prvdata->num_masters - 1) {
+		master_cnt = 0;
+		return 0;
+	}
+
+	pdata = prvdata->platform_data;
+	count = RPM_MASTERS_BUF_LEN;
+	buf = prvdata->buf;
+
+	if (prvdata->platform_data->version == 2) {
+		SNPRINTF(buf, count, "%s:",
+				GET_MASTER_NAME(master_cnt, prvdata));
+		
+		record.xo_count =
+				readl_relaxed(prvdata->reg_base +
+				(master_cnt * pdata->master_offset +
+				offsetof(struct msm_rpm_master_stats,
+				xo_count)));
+
+		SNPRINTF(buf, count, "%x", record.xo_count);
+
+		record.xo_accumulated_duration =
+				readq_relaxed(prvdata->reg_base +
+				(master_cnt * pdata->master_offset +
+				offsetof(struct msm_rpm_master_stats,
+				xo_accumulated_duration)));
+
+		SNPRINTF(buf, count, ":%llX\n", get_time_in_msec(record.xo_accumulated_duration));
+	} else {
+		SNPRINTF(buf, count, "%s_shutdown:",
+				GET_MASTER_NAME(master_cnt, prvdata));
+
+		record.numshutdowns = readl_relaxed(prvdata->reg_base +
+				(master_cnt * pdata->master_offset) + 0x0);
+
+		SNPRINTF(buf, count, "%x\n",record.numshutdowns);
+	}
+
+	master_cnt++;
+	return RPM_MASTERS_BUF_LEN - count;
+}
+#endif /* VENDOR_EDIT */
+
 static ssize_t msm_rpm_master_stats_file_read(struct file *file,
 				char __user *bufu, size_t count, loff_t *ppos)
 {
@@ -295,6 +361,46 @@ exit:
 	mutex_unlock(&msm_rpm_master_stats_mutex);
 	return ret;
 }
+
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static ssize_t oppo_rpm_master_stats_file_read(struct file *file,
+				char __user *bufu, size_t count, loff_t *ppos)
+{
+	struct msm_rpm_master_stats_private_data *prvdata;
+	struct msm_rpm_master_stats_platform_data *pdata;
+	ssize_t ret;
+
+	mutex_lock(&msm_rpm_master_stats_mutex);
+	prvdata = file->private_data;
+	if (!prvdata) {
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	pdata = prvdata->platform_data;
+	if (!pdata) {
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (!bufu || count == 0) {
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (*ppos <= pdata->phys_size) {
+		prvdata->len = oppo_rpm_master_copy_stats(prvdata);
+		*ppos = 0;
+	}
+
+	ret = simple_read_from_buffer(bufu, count, ppos,
+			prvdata->buf, prvdata->len);
+exit:
+	mutex_unlock(&msm_rpm_master_stats_mutex);
+	return ret;
+}
+#endif	/* VENDOR_EDIT */
 
 static int msm_rpm_master_stats_file_open(struct inode *inode,
 		struct file *file)
@@ -345,6 +451,17 @@ static const struct file_operations msm_rpm_master_stats_fops = {
 	.release  = msm_rpm_master_stats_file_close,
 	.llseek   = no_llseek,
 };
+
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static const struct file_operations oppo_rpm_master_stats_fops = {
+	.owner	  = THIS_MODULE,
+	.open	  = msm_rpm_master_stats_file_open,
+	.read	  = oppo_rpm_master_stats_file_read,
+	.release  = msm_rpm_master_stats_file_close,
+	.llseek   = no_llseek,
+};
+#endif /* VENDOR_EDIT */
 
 static struct msm_rpm_master_stats_platform_data
 			*msm_rpm_master_populate_pdata(struct device *dev)
@@ -443,7 +560,17 @@ static  int msm_rpm_master_stats_probe(struct platform_device *pdev)
 								__func__);
 		return -ENOMEM;
 	}
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+	dent = debugfs_create_file("oppo_rpm_master_stats", S_IRUGO, NULL,
+					pdata, &oppo_rpm_master_stats_fops);
 
+	if (!dent) {
+		dev_err(&pdev->dev, "%s: oppo_rpm_master_stats debugfs_create_file failed\n",
+								__func__);
+		return -ENOMEM;
+	}
+#endif /* VENDOR_EDIT */
 	platform_set_drvdata(pdev, dent);
 	return 0;
 }

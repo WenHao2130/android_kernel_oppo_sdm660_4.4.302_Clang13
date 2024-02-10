@@ -61,6 +61,18 @@
 #include <asm/unistd.h>
 #include <asm/pgtable.h>
 #include <asm/mmu_context.h>
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+/* Kui.Zhang@TEC.Kernel.Performance, 2019/03/13
+ * collect reserve area used count
+ */
+#include <linux/resmap_account.h>
+#endif
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+/* Kui.Zhang@TEC.Kernel.Performance, 2019/06/06
+ * collect svm_oom log
+ */
+#include <soc/oppo/oppo_healthinfo.h>
+#endif /*VENDOR_EDIT*/
 
 static void exit_mm(struct task_struct *tsk);
 
@@ -264,6 +276,23 @@ static bool has_stopped_jobs(struct pid *pgrp)
 	return false;
 }
 
+#ifdef VENDOR_EDIT
+//Shu.Liu@PSW.AD.Stability.Crash.1054829, 2014/01/20, Add for not kill zygote
+static bool oppo_is_android_core_group(struct pid *pgrp)
+{
+	struct task_struct *p;
+
+	do_each_pid_task(pgrp, PIDTYPE_PGID, p) {
+		if (( !strcmp(p->comm, "zygote") ) || ( !strcmp(p->comm, "main")) ) {
+			printk("oppo_is_android_core_group: find zygote will be hungup, ignore it \n");
+			return true;
+		}
+	} while_each_pid_task(pgrp, PIDTYPE_PGID, p);
+
+	return false;
+}
+#endif /* VENDOR_EDIT */
+
 /*
  * Check to see if any process groups have become orphaned as
  * a result of our exiting, and if they have any stopped jobs,
@@ -290,6 +319,13 @@ kill_orphaned_pgrp(struct task_struct *tsk, struct task_struct *parent)
 	    task_session(parent) == task_session(tsk) &&
 	    will_become_orphaned_pgrp(pgrp, ignored_task) &&
 	    has_stopped_jobs(pgrp)) {
+#ifdef VENDOR_EDIT
+//Shu.Liu@PSW.AD.Stability.Crash.1054829, 2014/01/10, Add for clean backstage
+		if (oppo_is_android_core_group(pgrp)) {
+			printk("kill_orphaned_pgrp: find android core process will be hungup, ignored it, only hungup itself:%s:%d , current=%d \n",tsk->comm,tsk->pid,current->pid);
+			return;
+		}
+#endif /* VENDOR_EDIT */
 		__kill_pgrp_info(SIGHUP, SEND_SIG_PRIV, pgrp);
 		__kill_pgrp_info(SIGCONT, SEND_SIG_PRIV, pgrp);
 	}
@@ -383,6 +419,93 @@ assign_new_owner:
 }
 #endif /* CONFIG_MEMCG */
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+static inline bool check_parent_is_zygote(struct task_struct *tsk)
+{
+	struct task_struct *t;
+	bool ret = false;
+
+	rcu_read_lock();
+	t = rcu_dereference(tsk->real_parent);
+	if (t) {
+		const struct cred *tcred = __task_cred(t);
+
+		if (!strcmp(t->comm, "main") && (tcred->uid.val == 0) &&
+				(t->parent != NULL) && !strcmp(t->parent->comm,"init"))
+			ret = true;
+	}
+	rcu_read_unlock();
+	return ret;
+}
+
+#define THRIDPART_APP_UID_LOW_LIMIT 10000UL
+static void trigger_svm_oom_event(struct mm_struct *mm)
+{
+	int len = 0;
+	int oom = 0;
+	int res = 0;
+	int over_time = 0;
+	int change_stack = 0;
+	struct rlimit *rlim;
+	unsigned long long current_time_ns;
+	char *svm_oom_msg = NULL;
+	unsigned int uid = (unsigned int)(current_uid().val);
+
+	if (!(rlimit_svm_log && (current->pid == current->tgid) &&
+				is_compat_task() &&
+				check_parent_is_zygote(current) &&
+				(uid >= THRIDPART_APP_UID_LOW_LIMIT)))
+		return;
+
+	svm_oom_msg = (char*)kmalloc(128, GFP_KERNEL);
+	if (!svm_oom_msg)
+		return;
+
+	down_read(&mm->mmap_sem);
+	if (mm->reserve_vma)
+		res = 1;
+	up_read(&mm->mmap_sem);
+
+	if ((svm_oom_pid == current->pid) &&
+			time_after_eq((svm_oom_jiffies + 15*HZ), jiffies)) {
+		svm_oom_pid = -1;
+		oom = 1;
+	}
+	rlim = current->signal->rlim + RLIMIT_STACK;
+	if (rlim->rlim_cur > STACK_RLIMIT_OVERFFLOW)
+		change_stack = 1;
+
+	if (change_stack) {
+		len = snprintf(svm_oom_msg, 127,
+				"{\"version\":1, \"size\":%ld, \"uid\":%u, \"type\":\"%s,%s\"}",
+				(long)rlim->rlim_cur, uid,
+				(oom ? "oom" : "no_oom"),
+				(res ? "res" : "no_res"));
+		svm_oom_msg[len] = '\0';
+		ohm_action_trig_with_msg(OHM_RLIMIT_MON, svm_oom_msg);
+		kfree(svm_oom_msg);
+		return;
+	}
+
+	current_time_ns = ktime_get_boot_ns();
+	if ((current_time_ns > current->real_start_time) ||
+			(current_time_ns - current->real_start_time >= TRIGGER_TIME_NS))
+		over_time = 1;
+
+	if (oom || (!change_stack && !res && over_time)) {
+		len = snprintf(svm_oom_msg, 127,
+				"{\"version\":1, \"size\":%ld, \"uid\":%u, \"type\":\"%s,%s,%s\"}",
+				(long)mm->backed_vm_size, uid,
+				(oom ? "oom" : "no_oom"),
+				(res ? "res" : "no_res"),
+				(change_stack ? "stack" : "no_stack"));
+		svm_oom_msg[len] = '\0';
+		ohm_action_trig_with_msg(OHM_SVM_MON, svm_oom_msg);
+	}
+	kfree(svm_oom_msg);
+}
+#endif
+
 /*
  * Turn us into a lazy TLB process if we
  * aren't already..
@@ -439,6 +562,12 @@ static void exit_mm(struct task_struct *tsk)
 	task_unlock(tsk);
 	mm_update_next_owner(mm);
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+	/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+	 * Trigger and upload the event.
+	 */
+	trigger_svm_oom_event(mm);
+#endif
 	mm_released = mmput(mm);
 	if (test_thread_flag(TIF_MEMDIE))
 		exit_oom_victim();
@@ -663,11 +792,54 @@ static void check_stack_usage(void)
 static inline void check_stack_usage(void) {}
 #endif
 
+//#ifdef VENDOR_EDIT
+//Haoran.Zhang@PSW.AD.Stability.Crash.1054829,2016/05/24, Add for debug critical svc crash
+static bool is_zygote_process(struct task_struct *t)
+{
+	const struct cred *tcred = __task_cred(t);
+
+	struct task_struct * first_child = NULL;
+	if(t->children.next && t->children.next != (struct list_head*)&t->children.next)
+		first_child = container_of(t->children.next, struct task_struct, sibling);
+	if(!strcmp(t->comm, "main") && (tcred->uid.val == 0) && (t->parent != 0 && !strcmp(t->parent->comm,"init"))  )
+		return true;
+	else
+		return false;
+	return false;
+}
+
+static bool is_critial_process(struct task_struct *t) {
+    if(t->group_leader && (!strcmp(t->group_leader->comm, "system_server") || is_zygote_process(t) || !strcmp(t->group_leader->comm, "surfaceflinger") || !strcmp(t->group_leader->comm, "servicemanager"))) 
+    {
+       if (t->pid == t->tgid)
+       {
+          return true;
+       }
+       else
+       {
+          return false;
+       }
+    } else {
+        return false;
+    }
+
+}
+//#endif /*VENDOR_EDIT*/
 void do_exit(long code)
 {
 	struct task_struct *tsk = current;
 	int group_dead;
+#if defined(VENDOR_EDIT) && defined(CONFIG_ELSA_STUB)
+//zhoumingjun@Swdp.shanghai, 2017/04/19, add process_event_notifier support
+	struct process_event_data pe_data;
+#endif
 	TASKS_RCU(int tasks_rcu_i);
+//#ifdef VENDOR_EDIT
+//Haoran.Zhang@PSW.AD.Stability.Crash.1054829,2016/05/24, Add for debug critical svc crash
+    if (is_critial_process(tsk)) {
+        printk("critical svc %d:%s exit with %ld !\n", tsk->pid, tsk->comm,code);
+    }
+//#endif /*VENDOR_EDIT*/
 
 	profile_task_exit(tsk);
 	kcov_task_exit(tsk);
@@ -691,6 +863,14 @@ void do_exit(long code)
 	ptrace_event(PTRACE_EVENT_EXIT, code);
 
 	validate_creds_for_do_exit(tsk);
+
+#if defined(VENDOR_EDIT) && defined(CONFIG_ELSA_STUB)
+//zhoumingjun@Swdp.shanghai, 2017/04/19, add process_event_notifier support
+	pe_data.pid = tsk->pid;
+	pe_data.uid = tsk->real_cred->uid;
+	pe_data.reason = code;
+	process_event_notifier_call_chain(PROCESS_EVENT_EXIT, &pe_data);
+#endif
 
 	/*
 	 * We're taking recursive faults here in do_exit. Safest is to just

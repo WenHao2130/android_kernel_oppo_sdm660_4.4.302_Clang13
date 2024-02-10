@@ -558,7 +558,13 @@ int pil_mss_reset_load_mba(struct pil_desc *pil)
 	const struct firmware *fw, *dp_fw = NULL;
 	char fw_name_legacy[10] = "mba.b00";
 	char fw_name[10] = "mba.mbn";
-	char *dp_name = "msadp";
+	//#ifndef VENDOR_EDIT
+	//Wentiam.Mai@PSW.NW.EM.1213568, 2018/01/05
+	//Add for customized subsystem ramdump
+	//char *dp_name = "msadp";
+	//#else
+	char *dp_name = "msadp.mbn";
+	//#endif
 	char *fw_name_p;
 	void *mba_dp_virt;
 	dma_addr_t mba_dp_phys, mba_dp_phys_end;

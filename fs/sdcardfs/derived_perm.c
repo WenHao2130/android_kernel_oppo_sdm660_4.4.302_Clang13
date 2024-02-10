@@ -32,6 +32,15 @@ static void inherit_derived_state(struct inode *parent, struct inode *child)
 	ci->data->under_android = pi->data->under_android;
 	ci->data->under_cache = pi->data->under_cache;
 	ci->data->under_obb = pi->data->under_obb;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+	ci->data->under_dcim = pi->data->under_dcim;
+	if (ci->data->under_dcim && !ci->data->dcim_uid) {
+		ci->data->dcim_uid = from_kuid(&init_user_ns, current_uid());
+	} else {
+		ci->data->dcim_uid = 0;
+	}
+#endif /* VENDOR_EDIT */
 }
 
 /* helper function for derived state */
@@ -46,6 +55,11 @@ void setup_derived_state(struct inode *inode, perm_t perm, userid_t userid,
 	info->data->under_android = false;
 	info->data->under_cache = false;
 	info->data->under_obb = false;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+	info->data->under_dcim = false;
+	info->data->dcim_uid = 0;
+#endif /* VENDOR_EDIT */
 }
 
 /* While renaming, there is a point where we want the path from dentry,
@@ -65,6 +79,13 @@ void get_derived_permission_new(struct dentry *parent, struct dentry *dentry,
 	struct qstr q_obb = QSTR_LITERAL("obb");
 	struct qstr q_media = QSTR_LITERAL("media");
 	struct qstr q_cache = QSTR_LITERAL("cache");
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+	struct qstr q_dcim = QSTR_LITERAL("DCIM");
+	struct qstr q_camera = QSTR_LITERAL("Camera");
+	struct qstr q_screenshots = QSTR_LITERAL("Screenshots");
+	struct sdcardfs_sb_info *sbi = SDCARDFS_SB(dentry->d_sb);
+#endif /* VENDOR_EDIT */
 
 	/* By default, each inode inherits from its parent.
 	 * the properties are maintained on its private fields
@@ -102,6 +123,11 @@ void get_derived_permission_new(struct dentry *parent, struct dentry *dentry,
 			/* App-specific directories inside; let anyone traverse */
 			info->data->perm = PERM_ANDROID;
 			info->data->under_android = true;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+		} else if (qstr_case_eq(name, &q_dcim)) {
+			info->data->perm = PERM_DCIM;
+#endif /* VENDOR_EDIT */
 		} else {
 			set_top(info, parent_info);
 		}
@@ -138,6 +164,19 @@ void get_derived_permission_new(struct dentry *parent, struct dentry *dentry,
 		}
 		set_top(info, parent_info);
 		break;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+	case PERM_DCIM:
+		if (sbi->options.multiuser && qstr_case_eq(name, &q_camera)) {
+			info->data->under_dcim = true;
+			info->data->perm = PERM_DCIM;
+		} else if (sbi->options.multiuser && qstr_case_eq(name, &q_screenshots)) {
+			info->data->under_dcim = true;
+			info->data->perm = PERM_DCIM;
+		}
+		set_top(info, parent_info);
+		break;
+#endif /* VENDOR_EDIT */
 	}
 }
 

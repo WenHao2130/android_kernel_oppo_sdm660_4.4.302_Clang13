@@ -157,6 +157,25 @@ static bool sleep_disabled;
 module_param_named(sleep_disabled,
 	sleep_disabled, bool, S_IRUGO | S_IWUSR | S_IWGRP);
 
+#ifdef VENDOR_EDIT
+//xiaocheng.li@Swdp.shanghai, 2015/11/9, Enable scoring lpm governor
+static bool use_governor;
+module_param_named(use_governor,
+	use_governor, bool, S_IRUGO | S_IWUSR | S_IWGRP);
+
+void lpm_use_governor(bool is_use)
+{
+	use_governor = is_use;
+}
+EXPORT_SYMBOL(lpm_use_governor);
+
+void lpm_disable_sleep(bool is_use)
+{
+	sleep_disabled = is_use;
+}
+EXPORT_SYMBOL(lpm_disable_sleep);
+#endif
+
 s32 msm_cpuidle_get_deep_idle_latency(void)
 {
 	return 10;

@@ -162,6 +162,8 @@ struct f2fs_mount_info {
 #define REQ_OP_WRITE	WRITE
 #define bio_op(bio)	((bio)->bi_rw & 1)
 
+extern int gc_dc_opt;
+
 static inline void bio_set_op_attrs(struct bio *bio, unsigned op,
 		unsigned op_flags)
 {
@@ -212,8 +214,8 @@ static inline struct timespec current_time(struct inode *inode)
 
 	if (unlikely(!inode->i_sb)) {
 		WARN(1, "current_time() called with uninitialized super_block in the inode");
-		return now; 
-	}    
+		return now;
+	}
 
 	return timespec_trunc(now, inode->i_sb->s_time_gran);
 }
@@ -242,12 +244,30 @@ enum {
 #define MAX_DISCARD_BLOCKS(sbi)		BLKS_PER_SEC(sbi)
 #define DEF_MAX_DISCARD_REQUEST		8	/* issue 8 discards per round */
 #define DEF_MAX_DISCARD_LEN		512	/* Max. 2MB per discard */
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+#define DEF_URGENT_DISCARD_ISSUE_TIME	50	/* 50 ms, if force */
+#define DEF_MIN_DISCARD_ISSUE_TIME	100	/* 100 ms, if exists */
+#else
 #define DEF_MIN_DISCARD_ISSUE_TIME	50	/* 50 ms, if exists */
-#define DEF_MID_DISCARD_ISSUE_TIME	500	/* 500 ms, if device busy */
+#endif
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+#define DEF_MID_DISCARD_ISSUE_TIME	2000		/* 2 s, if dev is busy */
+#define DEF_MAX_DISCARD_ISSUE_TIME	120000	/* 120 s, if no candidates */
+#define DEF_DISCARD_EMPTY_ISSUE_TIME	600000	/* 10 min, undiscard block=0 */
+#else
 #define DEF_MAX_DISCARD_ISSUE_TIME	60000	/* 60 s, if no candidates */
+#endif
+
 #define DEF_DISCARD_URGENT_UTIL		80	/* do more discard over 80% */
 #define DEF_CP_INTERVAL			60	/* 60 secs */
+#ifdef CONFIG_F2FS_OPPO_GC
+#define DEF_IDLE_INTERVAL		1	/* 1 secs */
+#else
 #define DEF_IDLE_INTERVAL		5	/* 5 secs */
+#endif
 
 struct cp_control {
 	int reason;
@@ -304,6 +324,13 @@ struct discard_entry {
 #define plist_idx(blk_num)	((blk_num) >= MAX_PLIST_NUM ?		\
 					(MAX_PLIST_NUM - 1) : (blk_num - 1))
 
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+#define FS_FREE_SPACE_PERCENT		20
+#define DEVICE_FREE_SPACE_PERCENT	10
+#define DISCARD_BUSY_THRESHOLD		10
+#endif
+
 enum {
 	D_PREP,
 	D_SUBMIT,
@@ -333,6 +360,9 @@ struct discard_cmd {
 	unsigned short ref;		/* reference count */
 	unsigned char state;		/* state */
 	int error;			/* bio error */
+#ifdef CONFIG_F2FS_BD_STAT
+	u64 discard_time;
+#endif
 };
 
 enum {
@@ -340,8 +370,26 @@ enum {
 	DPOLICY_FORCE,
 	DPOLICY_FSTRIM,
 	DPOLICY_UMOUNT,
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	DPOLICY_ODISCARD,
+#endif
 	MAX_DPOLICY,
 };
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-24, discard for dev gc */
+enum {
+	F2FS_TRIM_START,
+	F2FS_TRIM_FINISH,
+	F2FS_TRIM_INTERRUPT,
+};
+#endif
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-25, run discard jobs when put_super */
+#define DEF_UMOUNT_DISCARD_TIMEOUT	5	/* 5 secs */
+#endif
+
 
 struct discard_policy {
 	int type;			/* type of discard */
@@ -353,6 +401,10 @@ struct discard_policy {
 	bool io_aware;			/* issue discard in idle time */
 	bool sync;			/* submit discard with REQ_SYNC flag */
 	unsigned int granularity;	/* discard granularity */
+#ifdef VENDOR_EDIT
+	/* shifei.ge@TECH.Storage.FS, 2019-09-25 */
+	int timeout;			/* discard timeout for put_super */
+#endif
 };
 
 struct discard_cmd_control {
@@ -363,6 +415,11 @@ struct discard_cmd_control {
 	struct list_head fstrim_list;		/* in-flight discard from fstrim */
 	wait_queue_head_t discard_wait_queue;	/* waiting queue for wake-up */
 	unsigned int discard_wake;		/* to wake up discard thread */
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-1, add to for oDiscard & oTrim */
+	unsigned int odiscard_wake;		/* to wake up discard thread,for odiscard */
+	unsigned int otrim_wake;		/* to wake up discard thread,for otrim */
+#endif
 	struct mutex cmd_lock;
 	unsigned int nr_discards;		/* # of discards in the list */
 	unsigned int max_discards;		/* max. discards to be issued */
@@ -1131,6 +1188,11 @@ enum {
 enum {
 	CP_TIME,
 	REQ_TIME,
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019-09-17, log last fsync after last cp in panic */
+	FSYNC_TIME,
+#endif
+	UMOUNT_DISCARD_TIMEOUT,
 	MAX_TIME,
 };
 
@@ -1306,6 +1368,10 @@ struct f2fs_sb_info {
 	unsigned int ndirty_inode[NR_INODE_TYPE];	/* # of dirty inodes */
 #endif
 	spinlock_t stat_lock;			/* lock for stat operations */
+#ifdef CONFIG_F2FS_BD_STAT
+	spinlock_t bd_lock;
+	struct f2fs_bigdata_info *bd_info;	/* big data collections */
+#endif
 
 	/* For app/fs IO statistics */
 	spinlock_t iostat_lock;
@@ -1334,11 +1400,40 @@ struct f2fs_sb_info {
 
 	/* Precomputed FS UUID checksum for seeding other checksums */
 	__u32 s_chksum_seed;
+#ifdef CONFIG_F2FS_OPPO_GC
+	bool is_frag;                 	/* urgent gc flag */
+	unsigned long last_frag_check;	/* last urgent check jiffies */
+	atomic_t need_ssr_gc;         	/* ssr gc count */
+#endif
+	struct list_head sbi_list;
+	unsigned long last_wp_odc_jiffies;
+	int odiscard_already_run;
+
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019-09-17, log last fsync after last cp in panic */
+	nid_t last_fsync_ino;
+	struct notifier_block panic_notifier;
+#endif
 };
+
+#define CHECK_BATTERY_STATUS_TIME 60 /* second */
+#define BATTERY_EVENT_PERIOID 5 /* second */
+#define BATTERY_THRESHOLD 30 /* 30% */
+#define ODISCARD_WAKEUP_INTERVAL 900 /* 900 secs */
+#define ODISCARD_EXEC_TIME_NO_CHARGING 8000 /* 8000 ms */
+
+
+#define CHECK_BATTERY_SKIP_COUNT (CHECK_BATTERY_STATUS_TIME/BATTERY_EVENT_PERIOID)
+struct f2fs_device_state {
+	bool screen_off;
+	bool battery_charging;
+	int battery_percent;
+};
+extern struct f2fs_device_state f2fs_device;
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 #define f2fs_show_injection_info(type)				\
-	printk("%sF2FS-fs : inject %s in %s of %pF\n",		\
+	printk_ratelimited("%sF2FS-fs : inject %s in %s of %pF\n",		\
 		KERN_INFO, fault_name[type],			\
 		__func__, __builtin_return_address(0))
 static inline bool time_to_inject(struct f2fs_sb_info *sbi, int type)
@@ -1367,6 +1462,13 @@ static inline bool time_to_inject(struct f2fs_sb_info *sbi, int type)
 (((u64)part_stat_read((s)->sb->s_bdev->bd_part, sectors[1]) -		 \
 		(s)->sectors_written_start) >> 1)
 
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019-09-17, log last fsync after last cp in panic */
+static inline unsigned long f2fs_get_time(struct f2fs_sb_info *sbi, int type)
+{
+    return sbi->last_time[type];
+}
+#endif
 static inline void f2fs_update_time(struct f2fs_sb_info *sbi, int type)
 {
 	sbi->last_time[type] = jiffies;
@@ -1379,13 +1481,33 @@ static inline bool f2fs_time_over(struct f2fs_sb_info *sbi, int type)
 	return time_after(jiffies, sbi->last_time[type] + interval);
 }
 
+static inline unsigned int f2fs_time_to_wait(struct f2fs_sb_info *sbi,
+						int type)
+{
+	unsigned long interval = sbi->interval_time[type] * HZ;
+	unsigned int wait_ms = 0;
+	long delta;
+
+	delta = (sbi->last_time[type] + interval) - jiffies;
+	if (delta > 0)
+		wait_ms = jiffies_to_msecs(delta);
+
+	return wait_ms;
+}
+
 static inline bool is_idle(struct f2fs_sb_info *sbi)
 {
 	struct block_device *bdev = sbi->sb->s_bdev;
 	struct request_queue *q = bdev_get_queue(bdev);
 	struct request_list *rl = &q->root_rl;
 
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	struct discard_cmd_control *dcc = sbi->sm_info->dcc_info;
+	if (rl->count[BLK_RW_SYNC] + rl->count[BLK_RW_ASYNC] - atomic_read(&dcc->issing_discard))
+#else
 	if (rl->count[BLK_RW_SYNC] || rl->count[BLK_RW_ASYNC])
+#endif
 		return 0;
 
 	return f2fs_time_over(sbi, REQ_TIME);
@@ -2752,6 +2874,22 @@ static inline bool is_valid_blkaddr(block_t blkaddr)
 	return true;
 }
 
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+static inline block_t fs_free_space_threshold(struct f2fs_sb_info *sbi)
+{
+	return (block_t)(SM_I(sbi)->main_segments * sbi->blocks_per_seg *
+					FS_FREE_SPACE_PERCENT) / 100;
+}
+
+static inline block_t device_free_space_threshold(struct f2fs_sb_info *sbi)
+{
+	return (block_t)(SM_I(sbi)->main_segments * sbi->blocks_per_seg *
+					DEVICE_FREE_SPACE_PERCENT) / 100;
+}
+#endif
+
+
 /*
  * file.c
  */
@@ -2923,7 +3061,7 @@ void f2fs_invalidate_blocks(struct f2fs_sb_info *sbi, block_t addr);
 bool f2fs_is_checkpointed_data(struct f2fs_sb_info *sbi, block_t blkaddr);
 void f2fs_drop_discard_cmd(struct f2fs_sb_info *sbi);
 void f2fs_stop_discard_thread(struct f2fs_sb_info *sbi);
-bool f2fs_wait_discard_bios(struct f2fs_sb_info *sbi);
+bool f2fs_issue_discard_timeout(struct f2fs_sb_info *sbi);
 void f2fs_clear_prefree_segments(struct f2fs_sb_info *sbi,
 					struct cp_control *cpc);
 void f2fs_release_discard_addrs(struct f2fs_sb_info *sbi);
@@ -3260,6 +3398,12 @@ static inline int __init f2fs_create_root_stats(void) { return 0; }
 static inline void f2fs_destroy_root_stats(void) { }
 #endif
 
+#ifdef CONFIG_F2FS_BD_STAT
+#include "of2fs_bigdata.h"
+void f2fs_build_bd_stat(struct f2fs_sb_info *sbi);
+void f2fs_destroy_bd_stat(struct f2fs_sb_info *sbi);
+#endif
+
 extern const struct file_operations f2fs_dir_operations;
 extern const struct file_operations f2fs_file_operations;
 extern const struct inode_operations f2fs_file_inode_operations;
@@ -3414,6 +3558,22 @@ static inline bool f2fs_discard_en(struct f2fs_sb_info *sbi)
 	struct request_queue *q = bdev_get_queue(sbi->sb->s_bdev);
 
 	return blk_queue_discard(q) || f2fs_sb_has_blkzoned(sbi->sb);
+}
+
+static inline bool f2fs_hw_should_discard(struct f2fs_sb_info *sbi)
+{
+	return f2fs_sb_has_blkzoned(sbi->sb);
+}
+
+static inline bool f2fs_hw_support_discard(struct f2fs_sb_info *sbi)
+{
+	return blk_queue_discard(bdev_get_queue(sbi->sb->s_bdev));
+}
+
+static inline bool f2fs_realtime_discard_enable(struct f2fs_sb_info *sbi)
+{
+	return (test_opt(sbi, DISCARD) && f2fs_hw_support_discard(sbi)) ||
+					f2fs_hw_should_discard(sbi);
 }
 
 static inline void set_opt_mode(struct f2fs_sb_info *sbi, unsigned int mt)

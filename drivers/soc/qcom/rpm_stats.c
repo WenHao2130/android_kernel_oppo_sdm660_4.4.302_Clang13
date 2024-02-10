@@ -118,6 +118,24 @@ static inline int msm_rpmstats_append_data_to_buf(char *buf,
 		data->client_votes);
 }
 
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static inline int oppo_rpmstats_append_data_to_buf(char *buf,
+		struct msm_rpm_stats_data_v2 *data, int buflength)
+{
+	char stat_type[5];
+	u64 actual_last_sleep;
+
+	stat_type[4] = 0;
+	memcpy(stat_type, &data->stat_type, sizeof(u32));
+	actual_last_sleep = get_time_in_msec(data->accumulated);
+	//pr_err("%s RPM Mode:%s count:%d\n", __func__, stat_type, data->count);
+
+	return snprintf(buf, buflength,
+		"%s:%x:%llx\n", stat_type, data->count, actual_last_sleep);
+}
+#endif /* VENDOR_EDIT */
+
 static inline u32 msm_rpmstats_read_long_register_v2(void __iomem *regbase,
 		int index, int offset)
 {
@@ -171,6 +189,37 @@ static inline int msm_rpmstats_copy_stats_v2(
 	}
 	return length;
 }
+
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static inline int oppo_rpmstats_copy_stats_v2(
+			struct msm_rpmstats_private_data *prvdata)
+{
+	void __iomem *reg;
+	struct msm_rpm_stats_data_v2 data;
+	int i, length;
+
+	reg = prvdata->reg_base;
+	//pr_err("%s reg:%p, num_records:%d\n", __func__,
+	//	reg, prvdata->num_records);
+	for (i = 0, length = 0; i < prvdata->num_records; i++) {
+
+		data.stat_type = msm_rpmstats_read_long_register_v2(reg, i,
+				offsetof(struct msm_rpm_stats_data_v2,
+					stat_type));
+		data.count = msm_rpmstats_read_long_register_v2(reg, i,
+				offsetof(struct msm_rpm_stats_data_v2, count));
+		data.accumulated = msm_rpmstats_read_quad_register_v2(reg,
+				i, offsetof(struct msm_rpm_stats_data_v2,
+					accumulated));
+		length += oppo_rpmstats_append_data_to_buf(prvdata->buf + length,
+				&data, sizeof(prvdata->buf) - length);
+		prvdata->read_idx++;
+	}
+	//pr_err("%s read_idx:%d\n", __func__, prvdata->read_idx);
+	return length;
+}
+#endif /* VENDOR_EDIT */
 
 static inline unsigned long  msm_rpmstats_read_register(void __iomem *regbase,
 		int index, int offset)
@@ -246,6 +295,58 @@ static int msm_rpmstats_copy_stats(struct msm_rpmstats_private_data *pdata)
 			usec);
 }
 
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static int oppo_rpmstats_copy_stats(struct msm_rpmstats_private_data *pdata)
+{
+
+	struct msm_rpmstats_record record;
+	unsigned long ptr;
+	unsigned long offset;
+	char *str;
+	uint64_t usec;
+
+	ptr = msm_rpmstats_read_register(pdata->reg_base, pdata->read_idx, 0);
+	offset = (ptr - (unsigned long)pdata->platform_data->phys_addr_base);
+
+	if (offset > pdata->platform_data->phys_size)
+		str = (char *)ioremap(ptr, SZ_256);
+	else
+		str = (char *) pdata->reg_base + offset;
+
+	msm_rpmstats_strcpy(record.name, str);
+
+	if (offset > pdata->platform_data->phys_size)
+		iounmap(str);
+
+	record.id = msm_rpmstats_read_register(pdata->reg_base,
+						pdata->read_idx, 1);
+	if (record.id >= ID_MAX) {
+		pr_err("%s: array out of bound error found.\n",
+			__func__);
+		return -EINVAL;
+	}
+
+	record.val = msm_rpmstats_read_register(pdata->reg_base,
+						pdata->read_idx, 2);
+
+	if (record.id == ID_ACCUM_TIME_SCLK) {
+		usec = record.val * USEC_PER_SEC;
+		do_div(usec, SCLK_HZ);
+	}  else
+		usec = (unsigned long)record.val;
+
+	pdata->read_idx++;
+	//pr_err("%s RPM Mode:%s id:%s usec:%llu\n", __func__,
+		//record.name, msm_rpmstats_id_labels[record.id], usec);
+	return snprintf(pdata->buf, sizeof(pdata->buf),
+			"RPM Mode:%s\n\t%s:%llu\n",
+			record.name,
+			msm_rpmstats_id_labels[record.id],
+			usec);
+}
+#endif /* VENDOR_EDIT */
+
 static ssize_t msm_rpmstats_file_read(struct file *file, char __user *bufu,
 				  size_t count, loff_t *ppos)
 {
@@ -284,6 +385,52 @@ exit:
 	mutex_unlock(&rpm_stats_mutex);
 	return ret;
 }
+
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static ssize_t oppo_rpmstats_file_read(struct file *file, char __user *bufu,
+				  size_t count, loff_t *ppos)
+{
+	struct msm_rpmstats_private_data *prvdata;
+	ssize_t ret;
+
+	mutex_lock(&rpm_stats_mutex);
+	prvdata = file->private_data;
+
+	if (!prvdata) {
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (!bufu || count == 0) {
+		ret = -EINVAL;
+		goto exit;
+	}
+
+	if (prvdata->platform_data->version == 1) {
+		if (!prvdata->num_records)
+			prvdata->num_records = readl_relaxed(prvdata->reg_base);
+	}
+
+	if ((*ppos >= prvdata->len) &&
+		(prvdata->read_idx < prvdata->num_records)) {
+		//pr_err("%s version:%d\n", __func__, prvdata->platform_data->version);
+		if (prvdata->platform_data->version == 1)
+			prvdata->len = oppo_rpmstats_copy_stats(prvdata);
+		else if (prvdata->platform_data->version == 2)
+			prvdata->len = oppo_rpmstats_copy_stats_v2(prvdata);
+			*ppos = 0;
+	} else {
+		//pr_err("%s read_idx:%d, num_records:%d\n", __func__,
+			//prvdata->read_idx, prvdata->num_records);
+	}
+	ret = simple_read_from_buffer(bufu, count, ppos,
+			prvdata->buf, prvdata->len);
+exit:
+	mutex_unlock(&rpm_stats_mutex);
+	return ret;
+}
+#endif /* VENDOR_EDIT */
 
 static int msm_rpmstats_file_open(struct inode *inode, struct file *file)
 {
@@ -345,6 +492,17 @@ static const struct file_operations msm_rpmstats_fops = {
 	.release  = msm_rpmstats_file_close,
 	.llseek   = no_llseek,
 };
+
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+static const struct file_operations oppo_rpmstats_fops = {
+	.owner	  = THIS_MODULE,
+	.open	  = msm_rpmstats_file_open,
+	.read	  = oppo_rpmstats_file_read,
+	.release  = msm_rpmstats_file_close,
+	.llseek   = no_llseek,
+};
+#endif /* VENDOR_EDIT */
 
 static int msm_rpmheap_file_show(struct seq_file *m, void *v)
 {
@@ -535,7 +693,18 @@ static int msm_rpmstats_probe(struct platform_device *pdev)
 			kfree(pdata);
 			return -ENOMEM;
 		}
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.Power.Basic 2017/09/05 add for get rpm_stats
+		dent = debugfs_create_file("oppo_rpm_stats", S_IRUGO, NULL,
+				pdata, &oppo_rpmstats_fops);
 
+		if (!dent) {
+			pr_err("%s: ERROR oppo_rpm_stats debugfs_create_file	fail\n",
+					__func__);
+			kfree(pdata);
+			return -ENOMEM;
+		}
+#endif /* VENDOR_EDIT */
 	} else {
 		kfree(pdata);
 		return -EINVAL;

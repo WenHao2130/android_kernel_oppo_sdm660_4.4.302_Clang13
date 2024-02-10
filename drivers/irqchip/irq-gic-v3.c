@@ -38,6 +38,60 @@
 
 #include "irq-gic-common.h"
 
+#ifdef VENDOR_EDIT
+//Wenxian.Zhen@BSP.Power.Basic, 2016/07/19, add for analysis power consumption
+#define WAKEUP_SOURCE_WIFI_1ST	65
+#define WAKEUP_SOURCE_WIFI_2ND	71
+#define WAKEUP_SOURCE_WIFI_3RD	73
+#define WAKEUP_SOURCE_WIFI_4TH	76
+#define WAKEUP_SOURCE_MODEM_57	57
+#define WAKEUP_SOURCE_MODEM_53	53
+#define WAKEUP_SOURCE_SPS_54	54
+#define WAKEUP_SOURCE_ADSP_60	60
+#define WAKEUP_SOURCE_WIFI_660LITE_1ST	66
+#define WAKEUP_SOURCE_WIFI_660LITE_2ND	72
+#define WAKEUP_SOURCE_WIFI_660LITE_3RD	74
+#define WAKEUP_SOURCE_WIFI_660LITE_4TH	77
+#define WAKEUP_SOURCE_MODEM_660LITE_60	60
+#define WAKEUP_SOURCE_MODEM_660LITE_54	54
+#define WAKEUP_SOURCE_SPS_660LITE_57	57
+#define WAKEUP_SOURCE_ADSP_660LITE_61	61
+
+
+//#define WAKEUP_SOURCE_AP_RPM	200
+//#define WAKEUP_SOURCE_PMIC_ALARM	203
+//#define WAKEUP_SOURCE_RTC_INT_NUM	2
+#define WAKEUP_SOURCE_INT_FIRST		1
+#define WAKEUP_SOURCE_INT_SECOND	2
+
+extern unsigned int soc_is_660lite;
+
+u64	wakeup_source_count_wifi;
+u64	wakeup_source_count_modem;
+u64 wakeup_source_count_sps;
+u64 wakeup_source_count_adsp;
+//Yongyao.Song@PSW.NW.PWR.919039, 2017/01/20,add for modem wake up source
+#define MODEM_WAKEUP_SRC_NUM 3
+#define MODEM_DIAG_WS_INDEX 0
+#define MODEM_IPA_WS_INDEX 1
+#define MODEM_QMI_WS_INDEX 2
+extern int modem_wakeup_src_count[MODEM_WAKEUP_SRC_NUM];
+extern char modem_wakeup_src_string[MODEM_WAKEUP_SRC_NUM][10];
+//Yongyao.Song add end
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.AD.Performance.Power.1104067, 2016/05/12, Add for modem wake up source
+struct work_struct wakeup_reason_work;
+#endif /* VENDOR_EDIT */
+extern u64	wakeup_source_count_rtc;
+#endif //VENDOR_EDIT
+
+#ifdef VENDOR_EDIT
+//liuhd@PSW.CN.WiFi.Hardware.1202765,2017/12/10,add for the irq of wlan when system wakeuped by wlan
+u16 modem_wakeup_source = 0;
+#define WLAN_WAKEUP_IRQ_NUMBER	67
+#define WLAN_WAKEUP_IRQ_NUMBER_660LITE	68
+#endif //VENDOR_EDIT
+
 struct redist_region {
 	void __iomem		*redist_base;
 	phys_addr_t		phys_base;
@@ -420,6 +474,12 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 	u32 enabled;
 	u32 pending[32];
 	void __iomem *base = gic_data_dist_base(gic);
+#ifdef VENDOR_EDIT
+//Wenxian.Zhen@BSP.Power.Basic, 2016/07/19, add for analysis power consumption
+	unsigned int int_id_1 = 0;
+	unsigned int int_id_2 = 0;
+	unsigned int int_count = 0;
+#endif //VENDOR_EDIT 
 
 	if (!msm_show_resume_irq_mask)
 		return;
@@ -443,6 +503,88 @@ static void gic_show_resume_irq(struct gic_chip_data *gic)
 			name = desc->action->name;
 
 		pr_warn("%s: %d triggered %s\n", __func__, irq, name);
+		#ifdef VENDOR_EDIT
+		//liuhd@PSW.CN.WiFi.Hardware.1202765,2017/12/10,add for the irq of wlan when system wakeuped by wlan
+		if (!(soc_is_660lite )){
+		if (irq == WLAN_WAKEUP_IRQ_NUMBER)
+			{
+			pr_warn("triggered by wlan side\n");
+			modem_wakeup_source = 0;
+			schedule_work(&wakeup_reason_work);
+			}
+		}
+		else {
+		if (irq == WLAN_WAKEUP_IRQ_NUMBER_660LITE)
+			{
+			pr_warn("triggered by wlan side\n");
+			modem_wakeup_source = 0;
+			schedule_work(&wakeup_reason_work);
+			}
+		}
+		#endif //VENDOR_EDIT
+#ifdef VENDOR_EDIT
+//Wenxian.Zhen@BSP.Power.Basic, 2016/07/19, add for analysis power consumption
+		if (!(soc_is_660lite ))
+			{
+
+			if((irq >= WAKEUP_SOURCE_WIFI_1ST && irq <= WAKEUP_SOURCE_WIFI_2ND) ||
+				(irq >= WAKEUP_SOURCE_WIFI_3RD && irq <= WAKEUP_SOURCE_WIFI_4TH))
+				wakeup_source_count_wifi++;
+			if ((WAKEUP_SOURCE_MODEM_57 == irq) || (WAKEUP_SOURCE_MODEM_53 == irq)) {
+				wakeup_source_count_modem++;
+				//Yongyao.Song@PSW.NW.PWR.919039, 2017/01/20,add for modem wake up source
+				if (WAKEUP_SOURCE_MODEM_57 == irq) {
+					modem_wakeup_src_count[MODEM_QMI_WS_INDEX]++;
+				} else if (WAKEUP_SOURCE_MODEM_53 == irq) {
+					modem_wakeup_src_count[MODEM_IPA_WS_INDEX]++;
+					modem_wakeup_source = 1;
+					schedule_work(&wakeup_reason_work);
+				}
+				//Yongyao.Song add end
+			}
+			if(WAKEUP_SOURCE_SPS_54 == irq) {
+				wakeup_source_count_sps++;
+			}
+			if(WAKEUP_SOURCE_ADSP_60 == irq) {
+				wakeup_source_count_adsp++;
+			}
+			int_count++;
+			if (int_count == WAKEUP_SOURCE_INT_FIRST)
+				int_id_1 = irq;
+			if (int_count == WAKEUP_SOURCE_INT_SECOND)
+				int_id_2 = irq;
+			}
+		else
+			{
+
+			if((irq >= WAKEUP_SOURCE_WIFI_660LITE_1ST && irq <= WAKEUP_SOURCE_WIFI_660LITE_2ND) ||
+				(irq >= WAKEUP_SOURCE_WIFI_660LITE_3RD && irq <= WAKEUP_SOURCE_WIFI_660LITE_4TH))
+				wakeup_source_count_wifi++;
+			if ((WAKEUP_SOURCE_MODEM_660LITE_60 == irq) || (WAKEUP_SOURCE_MODEM_660LITE_54 == irq)) {
+				wakeup_source_count_modem++;
+				//Yongyao.Song@PSW.NW.PWR.919039, 2017/01/20,add for modem wake up source
+				if (WAKEUP_SOURCE_MODEM_660LITE_60 == irq) {
+					modem_wakeup_src_count[MODEM_QMI_WS_INDEX]++;
+				} else if (WAKEUP_SOURCE_MODEM_660LITE_54 == irq) {
+					modem_wakeup_src_count[MODEM_IPA_WS_INDEX]++;
+					modem_wakeup_source = 1;
+					schedule_work(&wakeup_reason_work);
+				}
+				//Yongyao.Song add end
+			}
+			if(WAKEUP_SOURCE_SPS_660LITE_57 == irq) {
+				wakeup_source_count_sps++;
+			}
+			if(WAKEUP_SOURCE_ADSP_660LITE_61 == irq) {
+				wakeup_source_count_adsp++;
+			}
+			int_count++;
+			if (int_count == WAKEUP_SOURCE_INT_FIRST)
+				int_id_1 = irq;
+			if (int_count == WAKEUP_SOURCE_INT_SECOND)
+				int_id_2 = irq;
+			}			
+#endif //VENDOR_EDIT 
 	}
 }
 
@@ -808,7 +950,16 @@ static int gic_set_affinity(struct irq_data *d, const struct cpumask *mask_val,
 	val = gic_mpidr_to_affinity(cpu_logical_map(cpu));
 
 	gic_write_irouter(val, reg);
-
+#ifdef VENDOR_EDIT
+//Fuchun.Liao@BSP.CHG.Basic 2017/03/03 add for dwc3 irq and power issue,case02837665
+	/*
+	* It is possible that irq is disabled from SW perspective only, 
+	* because kernel takes lazy disable approach. Therefore check irq 
+	* descriptor if it should kept disabled. 
+	*/ 
+	if (irqd_irq_disabled(d)) 
+		enabled = 0;  	
+#endif /* VENDOR_EDIT */
 	/*
 	 * It is possible that irq is disabled from SW perspective only,
 	 * because kernel takes lazy disable approach. Therefore check irq

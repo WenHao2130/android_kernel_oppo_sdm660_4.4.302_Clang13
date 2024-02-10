@@ -25,6 +25,8 @@
 #define CDEBUG_MASK (1<<3)
 /* dev and resource tracking */
 #define DDEBUG_MASK (1<<4)
+/* lost package stat */
+#define LDEBUG_MASK (1<<5)
 
 /* E.g (IDEBUG_MASK | CDEBUG_MASK | DDEBUG_MASK) */
 #define DEFAULT_DEBUG_MASK 0
@@ -38,6 +40,7 @@
 #define RDEBUG
 #define CDEBUG
 #define DDEBUG
+#define LDEBUG
 
 #define MSK_DEBUG(mask, ...) do {                           \
 		if (unlikely(qtaguid_debug_mask & (mask)))  \
@@ -67,6 +70,11 @@
 #define DR_DEBUG(...) MSK_DEBUG(DDEBUG_MASK, __VA_ARGS__)
 #else
 #define DR_DEBUG(...) no_printk(__VA_ARGS__)
+#endif
+#ifdef LDEBUG
+#define LS_DEBUG(...) MSK_DEBUG(LDEBUG_MASK, __VA_ARGS__)
+#else
+#define LS_DEBUG(...) no_printk(__VA_ARGS__)
 #endif
 
 extern uint qtaguid_debug_mask;
@@ -197,6 +205,29 @@ static inline uint64_t dc_sum_packets(struct data_counters *counters,
 		+ counters->bpc[set][direction][IFS_PROTO_OTHER].packets;
 }
 
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+#include <linux/sched.h>
+
+struct pid_node {
+	struct rb_node node;
+	char tag[TASK_COMM_LEN];
+};
+
+struct pid_stat {
+	struct pid_node tn;
+	struct data_counters counters;
+	pid_t pid;
+	tag_t uid;
+	int index;
+	struct list_head pslist;
+};
+
+struct split_uid {
+	uid_t uid;
+	struct list_head list;
+};
+#endif /* VENDOR_EDIT */
 
 /* Generic X based nodes used as a base for rb_tree ops */
 struct tag_node {
@@ -212,6 +243,12 @@ struct tag_stat {
 	 * matching parent uid_tag.
 	 */
 	struct data_counters *parent_counters;
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	struct rb_root pid_stat_tree;
+	spinlock_t pid_stat_list_lock;
+	struct iface_stat *iface_stat;
+#endif /* VENDOR_EDIT */
 };
 
 struct iface_stat {
@@ -238,6 +275,18 @@ struct iface_stat {
 	struct proc_dir_entry *proc_ptr;
 
 	struct rb_root tag_stat_tree;
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	struct list_head pid_stat_list;
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/09/28, Add for lost packages
+	struct rb_root ipv4_lost_stat_tree;
+	struct rb_root ipv6_lost_stat_tree;
+	spinlock_t lost_stat_tree_lock;
+	struct rb_root ip4_sock_info_tree;
+	spinlock_t sock_info_tree_lock;
+#endif /* VENDOR_EDIT */
 	spinlock_t tag_stat_list_lock;
 };
 

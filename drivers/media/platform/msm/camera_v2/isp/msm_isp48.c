@@ -353,8 +353,14 @@ struct msm_vfe_hardware_info vfe48_hw_info = {
 	.num_iommu_secure_ctx = 0,
 	.vfe_clk_idx = VFE48_SRC_CLK_DTSI_IDX,
 	.runtime_axi_update = 1,
+#ifndef VENDOR_EDIT
+/*modified by houyujun@Camera 20180206 for [overflow]*/
 	.min_ib = 100000000,
 	.min_ab = 100000000,
+#else
+	.min_ib = 200000000,
+	.min_ab = 200000000,
+#endif
 	.vfe_ops = {
 		.irq_ops = {
 			.read_and_clear_irq_status =

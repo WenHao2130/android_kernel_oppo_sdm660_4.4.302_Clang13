@@ -17,6 +17,26 @@
 #include "msm_sd.h"
 #include "msm_cci.h"
 #include "msm_eeprom.h"
+#ifdef VENDOR_EDIT
+/*Add by Zhengrong.Zhang@Camera 20160630 for merge basic modification*/
+#include <linux/proc_fs.h>
+
+#define EEPROM_REG_MODULE_ID_L     0x00
+#define EEPROM_REG_MODULE_ID_H     0x01
+/*Add by Hongbo.Dai@Camera 20170411 for get base info*/
+#define EEPROM_REG_MODULE_DAY      0x02
+#define EEPROM_REG_MODULE_MONTH    0x03
+#define EEPROM_REG_MODULE_YEAR_L   0x04
+#define EEPROM_REG_MODULE_YEAR_H   0x05
+#define EEPROM_REG_SENSOR_ID_L     0x06
+#define EEPROM_REG_SENSOR_ID_H     0x07
+/*Add by Hongbo.Dai@Camera 20170801 for get LENS ID*/
+#define EEPROM_REG_LENS_ID_L       0x08
+#define EEPROM_REG_LENS_ID_H       0x09
+#define EEPROM_REG_VCM_ID_L     0x0A
+#define EEPROM_REG_VCM_ID_H     0x0B
+#define EEPROM_BASE_INFO_SIZE   (EEPROM_REG_VCM_ID_H+1)
+#endif
 
 #undef CDBG
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
@@ -24,6 +44,55 @@
 DEFINE_MSM_MUTEX(msm_eeprom_mutex);
 #ifdef CONFIG_COMPAT
 static struct v4l2_file_operations msm_eeprom_v4l2_subdev_fops;
+#endif
+
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+uint16_t rear_module = 0;
+uint16_t rear_sensor = 0;
+uint16_t front_module = 0;
+uint16_t front_sensor = 0;
+/*oppo hufeng 20170224 add for back aux camera module vendor info*/
+uint16_t rear2_module = 0;
+uint16_t rear2_sensor = 0;
+
+/*bit1 front, bit0 rear*/
+uint16_t eeprom_probe_info = 0x0000;
+
+/*oppo hongbo.dai 20170418 add for alps VCM info*/
+struct vcm_id_info eeprom_alps_info[] = {
+	{0x58, 0x01, "ALPS-961B"},
+};
+/*oppo hongbo.dai 20170801 add for lens id info*/
+struct lens_id_info eeprom_lens_info[] = {
+	{0x5b, 0x01, "Lens-Sunny3952A"},
+	{0x5d, 0x02, "Lens-Sunny3962"},
+	{0x64, 0x03, "Lens-Largan60027A"},
+	{0x6d, 0x04, "Lens-Largan50195"},
+};
+/*oppo hongbo.dai 20170901 add for sensor info*/
+struct sensor_string_info eeprom_sensor_info[] = {
+	{0x17, "imx258"},
+	{0x18, "imx298"},
+	{0x1a, "imx398"},
+	{0x36, "s5k3l8"},
+	{0x1b, "imx371"},
+	{0x1c, "imx350"},
+	{0x1b, "imx376"},
+	{0x1e, "imx376k"},
+	{0x53, "imx576"},
+	{0x37, "s5k3p3"},
+	{0x38, "s5k3p3sp"},
+	{0x3d, "s5k2p7sq"},
+	{0x3a, "s5k3p8"},
+	{0x3b, "s5k3p8sp"},
+	{0x3c, "s5k2t7sp"},
+	{0x3e, "s5k2t7sx"},
+	{0x3f, "s5k2t7sm"},
+	{0x28, "ov13855_f13v08b"},
+	{0x29, "ov20880"},
+};
+
 #endif
 
 /**
@@ -151,7 +220,10 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 	struct msm_eeprom_memory_map_t *emap = block->map;
 	struct msm_eeprom_board_info *eb_info;
 	uint8_t *memptr = block->mapdata;
-
+#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera 20170503*/
+	uint32_t eeprom_read_size = 0;
+#endif
 	if (!e_ctrl) {
 		pr_err("%s e_ctrl is NULL", __func__);
 		return -EINVAL;
@@ -160,6 +232,12 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 	eb_info = e_ctrl->eboard_info;
 
 	for (j = 0; j < block->num_map; j++) {
+	#ifdef VENDOR_EDIT
+		/*add by hongbo.dai@camera 20170503*/
+		if(e_ctrl->mprobe && j > 0){
+			break;
+		}
+	#endif
 		if (emap[j].saddr.addr) {
 			eb_info->i2c_slaveaddr = emap[j].saddr.addr;
 			e_ctrl->i2c_client.cci_client->sid =
@@ -201,7 +279,26 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 				return rc;
 			}
 		}
-
+	#ifdef VENDOR_EDIT
+		/*add by hongbo.dai@camera 20170513 only get base info in probe phase*/
+		if (emap[j].mem.valid_size) {
+			e_ctrl->i2c_client.addr_type = emap[j].mem.addr_t;
+			if(j == 0 && e_ctrl->mprobe
+				&& emap[j].mem.valid_size > EEPROM_BASE_INFO_SIZE){
+			    eeprom_read_size = EEPROM_BASE_INFO_SIZE;
+			}else{
+			    eeprom_read_size = emap[j].mem.valid_size;
+			}
+			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
+				&(e_ctrl->i2c_client), emap[j].mem.addr,
+				memptr, eeprom_read_size);
+			if (rc < 0) {
+				pr_err("%s: read failed\n", __func__);
+				return rc;
+			}
+			memptr += eeprom_read_size;
+		}
+	#else
 		if (emap[j].mem.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].mem.addr_t;
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_read_seq(
@@ -213,6 +310,7 @@ static int read_eeprom_memory(struct msm_eeprom_ctrl_t *e_ctrl,
 			}
 			memptr += emap[j].mem.valid_size;
 		}
+	#endif
 		if (emap[j].pageen.valid_size) {
 			e_ctrl->i2c_client.addr_type = emap[j].pageen.addr_t;
 			rc = e_ctrl->i2c_client.i2c_func_tbl->i2c_write(
@@ -1478,6 +1576,39 @@ free_mem:
 	mem_map_array = NULL;
 	return rc;
 }
+#ifdef VENDOR_EDIT
+/*add by hongbo.dai@camera 20170503 for get eeprom data*/
+static int eeprom_init_alldata(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc =  0;
+	struct msm_camera_power_ctrl_t *power_info = NULL;
+
+	power_info = &(e_ctrl->eboard_info->power_info);
+
+	if (e_ctrl->i2c_client.cci_client)
+		e_ctrl->i2c_client.cci_client->i2c_freq_mode = I2C_FAST_MODE;
+	rc = msm_camera_power_up(power_info, e_ctrl->eeprom_device_type,
+		&e_ctrl->i2c_client);
+	if (rc) {
+		pr_err("eeprom power up failed rc %d\n", rc);
+		goto power_down;
+	}
+	rc = read_eeprom_memory(e_ctrl, &e_ctrl->cal_data);
+	if (rc < 0) {
+		pr_err("%s read_eeprom_memory failed\n", __func__);
+		goto power_down;
+	}
+
+power_down:
+	rc = msm_camera_power_down(power_info,
+		e_ctrl->eeprom_device_type, &e_ctrl->i2c_client);
+	if (rc) {
+		pr_err("failed rc %d\n", rc);
+	}
+
+	return rc;
+}
+#endif
 
 static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 	void __user *argp)
@@ -1534,6 +1665,15 @@ static int msm_eeprom_config32(struct msm_eeprom_ctrl_t *e_ctrl,
 				__func__, __LINE__);
 		}
 		break;
+#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera 20170503*/
+	case CFG_EEPROM_INIT_ALLDATA:
+		rc = eeprom_init_alldata(e_ctrl);
+		if (rc < 0)
+			pr_err("%s:%d Eeprom init all data failed\n",
+					__func__, __LINE__);
+		break;
+#endif
 	default:
 		break;
 	}
@@ -1579,6 +1719,396 @@ static long msm_eeprom_subdev_fops_ioctl32(struct file *file, unsigned int cmd,
 
 #endif
 
+
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+static int msm_eeprom_read_moduleinfo(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0;
+	uint16_t id_low = 0, id_high = 0;
+	//uint32_t sum = 0;
+	uint8_t *memptr = NULL;
+
+	memptr = e_ctrl->cal_data.mapdata;
+	if (!memptr)
+		return -ENODEV;
+
+	/*read module and sensor id*/
+	id_low = memptr[EEPROM_REG_MODULE_ID_L];
+	id_high = memptr[EEPROM_REG_MODULE_ID_H];
+	e_ctrl->module_info = (id_high<<8) | id_low;
+
+	if (e_ctrl->position == 0)
+		rear_module= e_ctrl->module_info;
+	else if (e_ctrl->position == 1)
+		front_module = e_ctrl->module_info;
+	else if (e_ctrl->position == 2)
+		rear2_module= e_ctrl->module_info;
+
+	id_low = memptr[EEPROM_REG_SENSOR_ID_L];
+	id_high = memptr[EEPROM_REG_SENSOR_ID_H];
+	if (e_ctrl->position == 0)
+		rear_sensor = (id_high<<8) | id_low;
+	else if (e_ctrl->position == 1)
+		front_sensor = (id_high<<8) | id_low;
+	else if (e_ctrl->position == 2)
+		rear2_sensor = (id_high<<8) | id_low;
+	pr_err("%s:%d: position %d, sensorID = 0x%x, moduleID = 0x%x\n",
+		__func__, __LINE__, e_ctrl->position, (id_high<<8) | id_low, e_ctrl->module_info);
+
+	return rc;
+}
+
+static int __msm_proc_eeprom_show(struct seq_file *file, void *v)
+{
+	struct msm_eeprom_ctrl_t *e_ctrl = (struct msm_eeprom_ctrl_t *)file->private;
+	int len = 0;
+
+	if (e_ctrl) {
+		seq_printf(file, "%d", e_ctrl->module_info);
+	}
+
+	return len;
+}
+
+static int msm_proc_eeprom_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, __msm_proc_eeprom_show, PDE_DATA(inode));
+}
+
+static const struct file_operations msm_proc_eeprom_fops = {
+	.owner = THIS_MODULE,
+	.open = msm_proc_eeprom_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+/*Added by hongbo.dai@Camera 20170417 for [eeprom vcm info]*/
+static int msm_eeprom_read_vcminfo(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0;
+	uint16_t vcm_id_low = 0, vcm_id_high = 0;
+	uint8_t *memptr = NULL;
+	int i = 0;
+	uint16_t vcm_info;
+
+	memptr = e_ctrl->cal_data.mapdata;
+	if (!memptr)
+		return -ENODEV;
+
+	/*read vcm id*/
+	vcm_id_low = memptr[EEPROM_REG_VCM_ID_L];
+	vcm_id_high = memptr[EEPROM_REG_VCM_ID_H];
+	vcm_info = (vcm_id_high<<8) | vcm_id_low;
+
+	for(i=0;i<ARRAY_SIZE(eeprom_alps_info);i++){
+		if(eeprom_alps_info[i].vcm_id==vcm_info){
+			e_ctrl->vcm_info=eeprom_alps_info[i].actuator_id;
+			break;
+		}
+	}
+	e_ctrl->vcm_id = vcm_info;
+	pr_err("%s:%d: position %d, vcmID = 0x%x, alpsID = 0x%x\n",
+		__func__, __LINE__, e_ctrl->position, (vcm_id_high<<8) | vcm_id_low, e_ctrl->vcm_info);
+
+	return rc;
+}
+
+static int __msm_proc_alpsinfo_show(struct seq_file *file, void *v)
+{
+	struct msm_eeprom_ctrl_t *e_ctrl = (struct msm_eeprom_ctrl_t *)file->private;
+	int len = 0;
+
+	if (e_ctrl) {
+		seq_printf(file, "%d", e_ctrl->vcm_info);
+	}
+
+	return len;
+}
+
+static int msm_proc_alpsinfo_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, __msm_proc_alpsinfo_show, PDE_DATA(inode));
+}
+
+static const struct file_operations msm_proc_alpsinfo_fops = {
+	.owner = THIS_MODULE,
+	.open = msm_proc_alpsinfo_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+/*Added by hongbo.dai@Camera 20170801 for [Lens ID]*/
+static int msm_eeprom_read_lensid(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0;
+	uint16_t lens_id_low = 0, lens_id_high = 0;
+	uint8_t *memptr = NULL;
+	int i = 0;
+	uint16_t lens_id;
+
+	memptr = e_ctrl->cal_data.mapdata;
+	if (!memptr)
+		return -ENODEV;
+
+	/*read lens id*/
+	lens_id_low = memptr[EEPROM_REG_LENS_ID_L];
+	lens_id_high = memptr[EEPROM_REG_LENS_ID_H];
+	lens_id = (lens_id_high<<8) | lens_id_low ;
+
+	for (i = 0; i < ARRAY_SIZE(eeprom_lens_info); i++) {
+		if (eeprom_lens_info[i].lens_id == lens_id) {
+			e_ctrl->lens_id= eeprom_lens_info[i].user_lens_id;
+			break;
+		}
+	}
+
+	pr_err("%s:%d: position %d, lensID = 0x%x, lens_id = 0x%x\n",
+		__func__, __LINE__, e_ctrl->position, (lens_id_high<<8) | lens_id_low, e_ctrl->lens_id);
+
+	return rc;
+}
+
+static int __msm_proc_lensid_show(struct seq_file *file, void *v)
+{
+	struct msm_eeprom_ctrl_t *e_ctrl = (struct msm_eeprom_ctrl_t *)file->private;
+	int len = 0;
+
+	if (e_ctrl) {
+		seq_printf(file, "%d", e_ctrl->lens_id);
+	}
+
+	return len;
+}
+
+static int msm_proc_lensid_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, __msm_proc_lensid_show, PDE_DATA(inode));
+}
+
+static const struct file_operations msm_proc_lensid_fops = {
+	.owner = THIS_MODULE,
+	.open = msm_proc_lensid_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+/*Added by hongbo.dai@Camera 20170901 for [eeprom sensor id]*/
+static int msm_eeprom_read_sensor(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0;
+	uint16_t sensor_id_low = 0, sensor_id_high = 0;
+	uint8_t *memptr = NULL;
+	int i = 0;
+	uint16_t sensor_info;
+
+	memptr = e_ctrl->cal_data.mapdata;
+	if (!memptr)
+		return -ENODEV;
+
+	/*read sensor id*/
+	sensor_id_low = memptr[EEPROM_REG_SENSOR_ID_L];
+	sensor_id_high = memptr[EEPROM_REG_SENSOR_ID_H];
+	sensor_info = (sensor_id_high << 8) | sensor_id_low ;
+	for (i = 0; i < ARRAY_SIZE(eeprom_sensor_info); i++) {
+		if (eeprom_sensor_info[i].value == sensor_info) {
+			strcpy(e_ctrl->sensor_info, eeprom_sensor_info[i].string);
+			break;
+		}
+	}
+
+	pr_err("%s:%d: position %d, sensorID = 0x%x  sensor_name:%s\n",
+		__func__, __LINE__, e_ctrl->position, sensor_info, e_ctrl->sensor_info);
+
+	return rc;
+}
+
+static int __msm_proc_sensor_show(struct seq_file *file, void *v)
+{
+	struct msm_eeprom_ctrl_t *e_ctrl = (struct msm_eeprom_ctrl_t *)file->private;
+	int len = 0;
+
+	if (e_ctrl) {
+		seq_printf(file, "%s", e_ctrl->sensor_info);
+	}
+
+	return len;
+}
+
+static int msm_proc_sensor_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, __msm_proc_sensor_show, PDE_DATA(inode));
+}
+
+static const struct file_operations msm_proc_sensor_fops = {
+	.owner = THIS_MODULE,
+	.open = msm_proc_sensor_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int __msm_proc_vcmid_show(struct seq_file *file, void *v)
+{
+	struct msm_eeprom_ctrl_t *e_ctrl = (struct msm_eeprom_ctrl_t *)file->private;
+	int len = 0;
+
+	if (e_ctrl) {
+		seq_printf(file, "0x%0x", e_ctrl->vcm_id);
+	}
+
+	return len;
+}
+
+static int msm_proc_vcmid_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, __msm_proc_vcmid_show, PDE_DATA(inode));
+}
+
+static const struct file_operations msm_proc_vcm_fops = {
+	.owner = THIS_MODULE,
+	.open = msm_proc_vcmid_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+/*Added by hongbo.dai@Camera 20170609 for [compare eeprom date info]*/
+#define EEPROM_YEAR  2017
+#define EEPROM_MONTH 4
+#define EEPROM_DAY   1
+static int msm_eeprom_compare_dateinfo(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	int rc = 0;
+	uint16_t year_low = 0, year_high = 0;
+	uint16_t day = 0, month = 0;
+	uint8_t *memptr = NULL;
+	uint16_t  year;
+
+	memptr = e_ctrl->cal_data.mapdata;
+	if (!memptr)
+		return -ENODEV;
+
+	/*read date info*/
+	year_low = memptr[EEPROM_REG_MODULE_YEAR_L];
+	year_high = memptr[EEPROM_REG_MODULE_YEAR_H];
+	year = (year_high*100)+year_low;
+
+	month = memptr[EEPROM_REG_MODULE_MONTH];
+	day = memptr[EEPROM_REG_MODULE_DAY];
+
+	pr_err("%s:%d: position %d, year = %04d, month = %02d, day = %02d\n",
+		__func__, __LINE__, e_ctrl->position, year, month,day);
+
+	if (year > EEPROM_YEAR){
+		rc = 1;
+	}else if(year == EEPROM_YEAR) {
+		if (month > EEPROM_MONTH)
+			rc = 1;
+		else if(month == EEPROM_MONTH){
+			if(day >= EEPROM_DAY)
+				rc = 1;
+		}
+	}
+	e_ctrl->date_info = rc;
+    return rc;
+}
+
+static int __msm_proc_dateinfo_show(struct seq_file *file, void *v)
+{
+	struct msm_eeprom_ctrl_t *e_ctrl = (struct msm_eeprom_ctrl_t *)file->private;
+	int len = 0;
+
+	if (e_ctrl) {
+		seq_printf(file, "%d", e_ctrl->date_info);
+	}
+
+	return len;
+}
+
+static int msm_proc_dateinfo_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, __msm_proc_dateinfo_show, PDE_DATA(inode));
+}
+
+static const struct file_operations msm_proc_date_fops = {
+	.owner = THIS_MODULE,
+	.open = msm_proc_dateinfo_open,
+	.read = seq_read,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+static int msm_eeprom_proc_init(struct msm_eeprom_ctrl_t *e_ctrl)
+{
+	struct proc_dir_entry *proc_entry;
+	char proc_name[64];
+	char proc_vcm_name[64];
+	char proc_date_name[64];
+	char proc_lensid_name[64];
+	char proc_vcmid_name[64];
+	char proc_sensorid_name[64];
+
+	if (eeprom_probe_info & 1 << e_ctrl->position) {
+		pr_err("%s:%d: NOTE! eeprom of position %d was probed before!!\n",
+			__func__, __LINE__, e_ctrl->position);
+		return -EFAULT;
+	}
+
+	/*basic info*/
+	if (e_ctrl->position == 1) {
+		strcpy(proc_name, "front_");
+	} else if(e_ctrl->position == 0) {
+		strcpy(proc_name, "rear_");
+    } else if(e_ctrl->position == 2) {
+		strcpy(proc_name, "rear2_");
+	} else {
+		strcpy(proc_name, "error_");
+	}
+	strcpy(proc_vcm_name,proc_name);
+	strcpy(proc_date_name,proc_name);
+	strcpy(proc_lensid_name, proc_name);
+	strcpy(proc_vcmid_name, proc_name);
+	strcpy(proc_sensorid_name, proc_name);
+	strcat(proc_name, "eeprom_info");
+	strcat(proc_vcm_name, "vcm_info");
+	strcat(proc_date_name, "date_info");
+	strcat(proc_lensid_name, "lens_id");
+	strcat(proc_vcmid_name, "vcm_id");
+	strcat(proc_sensorid_name, "sensor_id");
+	proc_entry = proc_create_data(proc_name, 0666, NULL, &msm_proc_eeprom_fops, (void *)e_ctrl);
+	if (proc_entry == NULL) {
+		pr_err("%s:%d: proc_create_data failed", __func__, __LINE__);
+		return -ENOMEM;
+	}
+	proc_entry = proc_create_data(proc_vcm_name, 0666, NULL, &msm_proc_alpsinfo_fops, (void *)e_ctrl);
+	if (proc_entry == NULL) {
+		pr_err("%s:%d: proc_create_data failed", __func__, __LINE__);
+		return -ENOMEM;
+	}
+	if (e_ctrl->position == 0) {
+		proc_entry = proc_create_data(proc_date_name, 0666, NULL, &msm_proc_date_fops, (void *)e_ctrl);
+		if (proc_entry == NULL) {
+			pr_err("%s:%d: proc_create_data failed", __func__, __LINE__);
+			return -ENOMEM;
+		}
+		proc_entry = proc_create_data(proc_vcmid_name, 0666, NULL, &msm_proc_vcm_fops, (void *)e_ctrl);
+	}
+
+	proc_entry = proc_create_data(proc_lensid_name, 0666, NULL, &msm_proc_lensid_fops, (void *)e_ctrl);
+	if (proc_entry == NULL) {
+		pr_err("%s:%d: proc_create_data failed", __func__, __LINE__);
+		return -ENOMEM;
+	}
+
+	proc_entry = proc_create_data(proc_sensorid_name, 0666, NULL, &msm_proc_sensor_fops, (void *)e_ctrl);
+
+	eeprom_probe_info |= (1 << e_ctrl->position);
+    return 0;
+}
+#endif /*VENDOR_EDIT*/
+
 static int msm_eeprom_platform_probe(struct platform_device *pdev)
 {
 	int rc = 0;
@@ -1605,6 +2135,11 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	e_ctrl->cal_data.map = NULL;
 	e_ctrl->userspace_probe = 0;
 	e_ctrl->is_supported = 0;
+#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera 20170503*/
+	e_ctrl->mprobe = true;
+	e_ctrl->date_info = 0;
+#endif
 	if (!of_node) {
 		pr_err("%s dev.of_node NULL\n", __func__);
 		rc = -EINVAL;
@@ -1681,6 +2216,17 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	if (rc < 0)
 		goto board_free;
 
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+        rc = of_property_read_u32(of_node, "position",
+            &e_ctrl->position);
+        if (rc < 0) {
+            e_ctrl->position = -1;
+            CDBG("%s failed %d\n", __func__, __LINE__);
+        }
+#endif
+
+
 	if (e_ctrl->userspace_probe == 0) {
 		rc = of_property_read_u32(of_node, "qcom,slave-addr",
 			&temp);
@@ -1727,6 +2273,21 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 		for (j = 0; j < e_ctrl->cal_data.num_data; j++)
 			CDBG("memory_data[%d] = 0x%X\n", j,
 				e_ctrl->cal_data.mapdata[j]);
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+		rc = msm_eeprom_read_moduleinfo(e_ctrl);
+/*Added by hongbo.dai@Camera 20170417 for [vcm info]*/
+		rc |= msm_eeprom_read_vcminfo(e_ctrl);
+		/*Added by hongbo.dai@Camera 20170609 for [date info]*/
+		if (e_ctrl->position == 0)
+			msm_eeprom_compare_dateinfo(e_ctrl);
+		/*Added by hongbo.dai@Camera 20170803 for [lens ID info]*/
+		msm_eeprom_read_lensid(e_ctrl);
+		/*Added by hongbo.dai@Camera 20170901 for [Sensor ID info]*/
+		msm_eeprom_read_sensor(e_ctrl);
+		if (rc >= 0)
+			msm_eeprom_proc_init(e_ctrl);
+#endif
 
 		e_ctrl->is_supported |= msm_eeprom_match_crc(&e_ctrl->cal_data);
 
@@ -1739,6 +2300,10 @@ static int msm_eeprom_platform_probe(struct platform_device *pdev)
 	} else
 		e_ctrl->is_supported = 1;
 
+#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera 20170503*/
+	e_ctrl->mprobe = false;
+#endif
 	v4l2_subdev_init(&e_ctrl->msm_sd.sd,
 		e_ctrl->eeprom_v4l2_subdev_ops);
 	v4l2_set_subdevdata(&e_ctrl->msm_sd.sd, e_ctrl);

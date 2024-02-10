@@ -1461,9 +1461,11 @@ static int ngd_slim_enable(struct msm_slim_ctrl *dev, bool enable)
 				pm_runtime_resume(dev->dev);
 			pm_runtime_mark_last_busy(dev->dev);
 			pm_runtime_put(dev->dev);
-		} else
+		} else {
 			SLIM_ERR(dev, "qmi init fail, ret:%d, state:%d\n",
 					ret, dev->state);
+			BUG_ON(1);
+		}
 	} else {
 		msm_slim_qmi_exit(dev);
 	}

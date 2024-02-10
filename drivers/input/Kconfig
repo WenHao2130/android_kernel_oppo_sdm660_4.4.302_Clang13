@@ -214,6 +214,11 @@ source "drivers/input/touchscreen/Kconfig"
 
 source "drivers/input/misc/Kconfig"
 
+#ifdef VENDOR_EDIT
+#Haitao.Zhou@Prd.BaseDrv, 2017/02/16 Add for fingerprint compatibility
+source "drivers/input/misc/oppo_fp_drivers/Kconfig"
+#endif /* VENDOR_EDIT */
+
 endif
 
 menu "Hardware I/O ports"

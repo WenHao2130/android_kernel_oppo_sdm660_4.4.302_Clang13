@@ -108,6 +108,20 @@ static struct sk_buff *dequeue_skb(struct Qdisc *q, bool *validate,
 	return skb;
 }
 
+#ifdef VENDOR_EDIT
+//Junyuan.Huang@PSW.CN.WiFi.Network.1471780, 2018/06/26,
+//Add for limit speed function
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+struct sk_buff *qdisc_dequeue_skb(struct Qdisc *q, bool *validate)
+{
+	int packets;
+
+	return dequeue_skb(q, validate, &packets);
+}
+EXPORT_SYMBOL(qdisc_dequeue_skb);
+#endif
+#endif /* VENDOR_EDIT */
+
 static inline int handle_dev_cpu_collision(struct sk_buff *skb,
 					   struct netdev_queue *dev_queue,
 					   struct Qdisc *q)

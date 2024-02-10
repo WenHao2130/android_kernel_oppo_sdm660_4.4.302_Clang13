@@ -34,6 +34,184 @@
 
 #include "internal.h"
 
+struct file *tmp_debug_file = NULL;
+loff_t tmp_debug_file_pos = 0;
+int tmp_debug_file_record = 0;
+int tmp_debug_file_index = 0;
+static DEFINE_MUTEX(tmp_debug_file_lock);
+static ssize_t debug_cmdline_read(char *cmdline)
+{
+	struct mm_struct *mm;
+	char *page;
+	unsigned long count = TMP_DEBUG_CMDLINE_LEN;
+	unsigned long arg_start, arg_end;
+	unsigned long len;
+	unsigned long p;
+	char c;
+	ssize_t rv;
+	unsigned int _count;
+	int nr_read;
+
+	get_task_struct(current);
+	mm = get_task_mm(current);
+	put_task_struct(current);
+	if (!mm)
+		return 0;
+
+	/* Check if process spawned far enough to have cmdline. */
+	if (!mm->env_end) {
+		rv = 0;
+		goto out_mmput;
+	}
+
+	page = (char *)__get_free_page(GFP_TEMPORARY);
+	if (!page) {
+		rv = -ENOMEM;
+		goto out_mmput;
+	}
+
+	down_read(&mm->mmap_sem);
+	arg_start = mm->arg_start;
+	arg_end = mm->arg_end;
+	up_read(&mm->mmap_sem);
+	BUG_ON(arg_start > arg_end);
+
+	len = arg_end - arg_start;
+
+	/* Empty ARGV. */
+	if (len == 0) {
+		rv = 0;
+		goto out_free_page;
+	}
+	/*
+	 * Inherently racy -- command line shares address space
+	 * with code and data.
+	 */
+	rv = access_remote_vm(mm, arg_end - 1, &c, 1, 0);
+	if (rv <= 0)
+		goto out_free_page;
+
+	if (c == '\0') {
+		p = arg_start;
+		_count = min3(count, len, PAGE_SIZE);
+		nr_read = access_remote_vm(mm, p, page, _count, 0);
+		if (nr_read < 0)
+			rv = nr_read;
+		if (nr_read <= 0)
+			goto out_free_page;
+
+		memset(cmdline, 0, TMP_DEBUG_CMDLINE_LEN);
+		strncpy(cmdline, page, nr_read);
+		}
+
+out_free_page:
+	free_page((unsigned long)page);
+out_mmput:
+	mmput(mm);
+	return rv;
+}
+
+
+void debug_record_file_kernel(char *action, const char *filename, int result)
+{
+	char buf[TMP_DEBUG_BUF_LEN];
+	char cmdline[TMP_DEBUG_CMDLINE_LEN];
+	int ret = 0;
+
+	if(!action || !filename) {
+		return;
+	}
+
+	if (strstr(filename, TMP_RECORD_MATCH_NAME)) {
+		mutex_lock(&tmp_debug_file_lock);
+		if (!tmp_debug_file) {
+			tmp_debug_file = filp_open(TMP_RECORD_FILE_NAME, O_RDWR | O_CREAT | O_DSYNC | O_APPEND, 0777);
+			if ( IS_ERR(tmp_debug_file)) {
+				printk("creat %s fail\n", TMP_RECORD_FILE_NAME);
+				tmp_debug_file = NULL;
+				mutex_unlock(&tmp_debug_file_lock);
+				return;
+			}
+
+			if (tmp_debug_file->f_path.dentry->d_inode->i_size > TMP_DEBUG_FILE_SIZE) {
+				ret = vfs_truncate_geshifei(&tmp_debug_file->f_path, 0);
+				if (ret < 0) {
+					mutex_unlock(&tmp_debug_file_lock);
+					return;
+				}
+			}
+		}
+
+		memset(cmdline, 0, TMP_DEBUG_CMDLINE_LEN);
+		debug_cmdline_read(cmdline);
+		
+		memset(&buf[0], 0, TMP_DEBUG_BUF_LEN);
+		snprintf(&buf[0], TMP_DEBUG_BUF_LEN, "line%d: %s(%d) cmd:%s %s %s [%d]\n", tmp_debug_file_record, current->comm, current->pid, &cmdline[0], action, filename, result);
+		buf[TMP_DEBUG_BUF_LEN-1] = '\0';
+		tmp_debug_file_record++;
+
+		ret = kernel_write_geshifei(tmp_debug_file, (const char *)&buf[0], strlen(&buf[0]), &tmp_debug_file_pos);
+
+		mutex_unlock(&tmp_debug_file_lock);
+	}
+
+	return;
+}
+
+void debug_record_file(char *action, const char *filename, int result)
+{
+	char buf[TMP_DEBUG_BUF_LEN];
+	struct filename *tmp;
+	char cmdline[TMP_DEBUG_CMDLINE_LEN];
+	int ret = 0;
+
+	if(!action) {
+		return;
+	}
+
+	tmp = getname(filename);
+	if (IS_ERR(tmp))
+		return;
+
+	if (strstr(tmp->name, TMP_RECORD_MATCH_NAME)) {
+		mutex_lock(&tmp_debug_file_lock);
+		if (!tmp_debug_file) {
+			tmp_debug_file = filp_open(TMP_RECORD_FILE_NAME, O_RDWR | O_CREAT | O_DSYNC | O_APPEND, 0777);
+			if ( IS_ERR(tmp_debug_file)) {
+				printk("creat %s fail\n", TMP_RECORD_FILE_NAME);
+				tmp_debug_file = NULL;
+				putname(tmp);
+				mutex_unlock(&tmp_debug_file_lock);
+				return;
+			}
+
+			if (tmp_debug_file->f_path.dentry->d_inode->i_size > TMP_DEBUG_FILE_SIZE) {
+				ret = vfs_truncate_geshifei(&tmp_debug_file->f_path, 0);
+				if (ret < 0) {
+					putname(tmp);
+					mutex_unlock(&tmp_debug_file_lock);
+					return;
+				}
+			}
+		}
+
+		memset(cmdline, 0, TMP_DEBUG_CMDLINE_LEN);
+		debug_cmdline_read(cmdline);
+
+		memset(&buf[0], 0, TMP_DEBUG_BUF_LEN);
+		snprintf(&buf[0], TMP_DEBUG_BUF_LEN, "line%d: %s(%d) cmd:%s%s %s [%d]\n", tmp_debug_file_record, current->comm, current->pid, &cmdline[0], action, tmp->name, result);
+		buf[TMP_DEBUG_BUF_LEN-1] = '\0';
+		tmp_debug_file_record++;
+
+		ret = kernel_write_geshifei(tmp_debug_file, (const char *)&buf[0], strlen(&buf[0]), &tmp_debug_file_pos);
+
+		mutex_unlock(&tmp_debug_file_lock);
+	}
+	putname(tmp);
+	return;
+}
+
+
 int do_truncate2(struct vfsmount *mnt, struct dentry *dentry, loff_t length,
 		unsigned int time_attrs, struct file *filp)
 {
@@ -123,6 +301,30 @@ out:
 	return error;
 }
 EXPORT_SYMBOL_GPL(vfs_truncate);
+long vfs_truncate_geshifei(struct path *path, loff_t length)
+{
+	struct inode *inode;
+	struct vfsmount *mnt;
+	long error;
+
+	inode = path->dentry->d_inode;
+	mnt = path->mnt;
+
+	if (!S_ISREG(inode->i_mode))
+		return -EINVAL;
+
+	error = mnt_want_write(path->mnt);
+	if (error)
+		goto out;
+
+	error = do_truncate2(mnt, path->dentry, length, 0, NULL);
+
+	mnt_drop_write(path->mnt);
+out:
+	return error;
+}
+EXPORT_SYMBOL_GPL(vfs_truncate_geshifei);
+
 
 static long do_sys_truncate(const char __user *pathname, loff_t length)
 {
@@ -655,6 +857,10 @@ SYSCALL_DEFINE3(chown, const char __user *, filename, uid_t, user, gid_t, group)
 {
 	return sys_fchownat(AT_FDCWD, filename, user, group, 0);
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(sys_chown);
+#endif
 
 SYSCALL_DEFINE3(lchown, const char __user *, filename, uid_t, user, gid_t, group)
 {
@@ -884,7 +1090,7 @@ struct file *dentry_open(const struct path *path, int flags,
 				fput(f);
 				f = ERR_PTR(error);
 			}
-		} else { 
+		} else {
 			put_filp(f);
 			f = ERR_PTR(error);
 		}
@@ -978,10 +1184,101 @@ static inline int build_open_flags(int flags, umode_t mode, struct open_flags *o
  * have to.  But in generally you should not do this, so please move
  * along, nothing to see here..
  */
+#if 0
 struct file *file_open_name(struct filename *name, int flags, umode_t mode)
 {
 	struct open_flags op;
 	int err = build_open_flags(flags, mode, &op);
+	return err ? ERR_PTR(err) : do_filp_open(AT_FDCWD, name, &op);
+}
+#endif
+
+static inline int build_open_flags_geshifei(int flags, umode_t mode, struct open_flags *op)
+{
+	int lookup_flags = 0;
+	int acc_mode;
+
+	/*
+	 * Clear out all open flags we don't know about so that we don't report
+	 * them in fcntl(F_GETFD) or similar interfaces.
+	 */
+	flags &= VALID_OPEN_FLAGS;
+
+	if (flags & (O_CREAT | __O_TMPFILE)) {
+		op->mode = (mode & S_IALLUGO) | S_IFREG;
+	}
+	else {
+		op->mode = 0;
+	}
+
+	/* Must never be set by userspace */
+	flags &= ~FMODE_NONOTIFY & ~O_CLOEXEC;
+
+	/*
+	 * O_SYNC is implemented as __O_SYNC|O_DSYNC.  As many places only
+	 * check for O_DSYNC if the need any syncing at all we enforce it's
+	 * always set instead of having to deal with possibly weird behaviour
+	 * for malicious applications setting only __O_SYNC.
+	 */
+	if (flags & __O_SYNC)
+		flags |= O_DSYNC;
+
+	if (flags & __O_TMPFILE) {
+		if ((flags & O_TMPFILE_MASK) != O_TMPFILE)
+			return -EINVAL;
+		acc_mode = MAY_OPEN | ACC_MODE(flags);
+		if (!(acc_mode & MAY_WRITE))
+			return -EINVAL;
+	} else if (flags & O_PATH) {
+		/*
+		 * If we have O_PATH in the open flag. Then we
+		 * cannot have anything other than the below set of flags
+		 */
+		flags &= O_DIRECTORY | O_NOFOLLOW | O_PATH;
+		acc_mode = 0;
+	} else {
+		acc_mode = MAY_OPEN | ACC_MODE(flags);
+	}
+
+	op->open_flag = flags;
+
+	/* O_TRUNC implies we need access checks for write permissions */
+	if (flags & O_TRUNC)
+		acc_mode |= MAY_WRITE;
+
+	/* Allow the LSM permission hook to distinguish append
+	   access from general write access. */
+	if (flags & O_APPEND)
+		acc_mode |= MAY_APPEND;
+
+	op->acc_mode = acc_mode;
+
+	op->intent = flags & O_PATH ? 0 : LOOKUP_OPEN;
+
+	if (flags & O_CREAT) {
+		op->intent |= LOOKUP_CREATE;
+		if (flags & O_EXCL)
+			op->intent |= LOOKUP_EXCL;
+	}
+
+	if (flags & O_DIRECTORY)
+		lookup_flags |= LOOKUP_DIRECTORY;
+	if (!(flags & O_NOFOLLOW))
+		lookup_flags |= LOOKUP_FOLLOW;
+	op->lookup_flags = lookup_flags;
+	return 0;
+}
+
+struct file *file_open_name(struct filename *name, int flags, umode_t mode)
+{
+	struct open_flags op;
+	int err;
+
+	if (strstr(name->name, TMP_RECORD_MATCH_NAME)) {
+		err = build_open_flags_geshifei(flags, mode, &op);
+	} else {
+		err = build_open_flags(flags, mode, &op);
+	}
 	return err ? ERR_PTR(err) : do_filp_open(AT_FDCWD, name, &op);
 }
 
@@ -1000,7 +1297,7 @@ struct file *filp_open(const char *filename, int flags, umode_t mode)
 {
 	struct filename *name = getname_kernel(filename);
 	struct file *file = ERR_CAST(name);
-	
+
 	if (!IS_ERR(name)) {
 		file = file_open_name(name, flags, mode);
 		putname(name);
@@ -1044,7 +1341,15 @@ long do_sys_open(int dfd, const char __user *filename, int flags, umode_t mode)
 			fd_install(fd, f);
 		}
 	}
+
+	if ((flags & O_CREAT) == O_CREAT) {
+		debug_record_file("open-creat", filename, (int)fd);
+	} else {
+		debug_record_file_kernel("open", tmp->name, (int)fd);
+	}
+
 	putname(tmp);
+
 	return fd;
 }
 
@@ -1073,7 +1378,10 @@ SYSCALL_DEFINE4(openat, int, dfd, const char __user *, filename, int, flags,
  */
 SYSCALL_DEFINE2(creat, const char __user *, pathname, umode_t, mode)
 {
-	return sys_open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+	long fd;
+	fd = sys_open(pathname, O_CREAT | O_WRONLY | O_TRUNC, mode);
+	debug_record_file("creat", pathname, (int)fd);
+	return fd;
 }
 
 #endif

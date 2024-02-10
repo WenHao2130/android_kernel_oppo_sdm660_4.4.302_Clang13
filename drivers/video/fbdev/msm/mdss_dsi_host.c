@@ -117,12 +117,24 @@ void mdss_dsi_ctrl_init(struct device *ctrl_dev,
 	init_completion(&ctrl->video_comp);
 	init_completion(&ctrl->dynamic_comp);
 	init_completion(&ctrl->bta_comp);
+	#ifdef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+	 * solve mdp dump error in monkey test.
+	 */
+	init_completion(&ctrl->db_mode_wait);
+	#endif /*VENDOR_EDIT*/
 	spin_lock_init(&ctrl->irq_lock);
 	spin_lock_init(&ctrl->mdp_lock);
 	mutex_init(&ctrl->mutex);
 	mutex_init(&ctrl->cmd_mutex);
 	mutex_init(&ctrl->clk_lane_mutex);
 	mutex_init(&ctrl->cmdlist_mutex);
+	#ifdef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+	 * solve mdp dump error in monkey test.
+	 */
+	spin_lock_init(&ctrl->db_mode_mutex);
+	#endif /*VENDOR_EDIT*/
 	mdss_dsi_buf_alloc(ctrl_dev, &ctrl->tx_buf, SZ_4K);
 	mdss_dsi_buf_alloc(ctrl_dev, &ctrl->rx_buf, SZ_4K);
 	mdss_dsi_buf_alloc(ctrl_dev, &ctrl->status_buf, SZ_4K);
@@ -1521,6 +1533,12 @@ static void mdss_dsi_schedule_dma_cmd(struct mdss_dsi_ctrl_pdata *ctrl)
 	u32 v_blank, val = 0x0;
 	struct mdss_panel_info *pinfo;
 
+	#ifdef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/20,
+	 * force disable dsi schedule dma*/
+	return;
+	#endif /*VENDOR_EDIT*/
+
 	/* for dsi 2.0 and below dma scheduling is not supported */
 	if ((!ctrl) || (ctrl->panel_mode == DSI_CMD_MODE) ||
 		(ctrl->shared_data->hw_rev < MDSS_DSI_HW_REV_201))
@@ -2177,6 +2195,43 @@ end:
 	return rp->read_cnt;
 }
 
+#ifdef VENDOR_EDIT
+/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+ * solve mdp dump error in monkey test.
+ */
+static int mdss_dsi_cmd_buff_offset(struct mdss_dsi_ctrl_pdata *ctrl,
+		dma_addr_t dma_addr, int len)
+{
+	u32 reg_val;
+	int ret = 0;
+
+	reg_val = MIPI_INP((ctrl->ctrl_base) + 0x1e8);
+	pr_debug("%s DB_MODE %x\n", __func__, reg_val);
+
+	/* if db mode is 1 wait for it to become 0 */
+	if (reg_val) {
+		ret = wait_for_completion_timeout(&ctrl->db_mode_wait,
+							DMA_TX_TIMEOUT);
+		MDSS_XLOG(reg_val, ret);
+	}
+
+	if (!ret) {
+		spin_lock(&ctrl->db_mode_mutex);
+		MIPI_OUTP((ctrl->ctrl_base) + 0x048, dma_addr);
+		MIPI_OUTP((ctrl->ctrl_base) + 0x04c, len);
+		/* ensure that buffer offset is programmed properly */
+		wmb();
+		spin_unlock(&ctrl->db_mode_mutex);
+
+		MIPI_OUTP((ctrl->ctrl_base) + 0x090, 0x01);
+		/* ensure cmd is triggered */
+		wmb();
+	}
+
+	return ret;
+}
+#endif /*VENDOR_EDIT*/
+
 static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 					struct dsi_buf *tp)
 {
@@ -2219,9 +2274,19 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 				mdss_dsi_set_reg(mctrl, 0x10c,
 						0x0f0000, 0x0f0000);
 			}
+			#ifdef VENDOR_EDIT
+			/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+			 * solve mdp dump error in monkey test.
+			 */
+			ret = mdss_dsi_cmd_buff_offset(mctrl,
+						ctrl->dma_addr, len);
+			if (ret)
+				goto end;
+			#else /*VENDOR_EDIT*/
 			MIPI_OUTP(mctrl->ctrl_base + 0x048, ctrl->dma_addr);
 			MIPI_OUTP(mctrl->ctrl_base + 0x04c, len);
 			MIPI_OUTP(mctrl->ctrl_base + 0x090, 0x01); /* trigger */
+			#endif /*VENDOR_EDIT*/
 		}
 	}
 
@@ -2231,16 +2296,30 @@ static int mdss_dsi_cmd_dma_tx(struct mdss_dsi_ctrl_pdata *ctrl,
 	}
 
 	/* send cmd to its panel */
+	#ifdef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+	 * solve mdp dump error in monkey test.
+	 */
+	ret = mdss_dsi_cmd_buff_offset(ctrl, ctrl->dma_addr, len);
+	if (ret)
+		goto end;
+	#else /*VENDOR_EDIT*/
 	MIPI_OUTP((ctrl->ctrl_base) + 0x048, ctrl->dma_addr);
 	MIPI_OUTP((ctrl->ctrl_base) + 0x04c, len);
 	wmb();
+	#endif /*VENDOR_EDIT*/
 
 	/* schedule dma cmds at start of blanking region */
 	mdss_dsi_schedule_dma_cmd(ctrl);
 
+	#ifndef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+	 * solve mdp dump error in monkey test.
+	 */
 	/* DSI_CMD_MODE_DMA_SW_TRIGGER */
 	MIPI_OUTP((ctrl->ctrl_base) + 0x090, 0x01);
 	wmb();
+	#endif /*VENDOR_EDIT*/
 	MDSS_XLOG(ctrl->dma_addr, len);
 
 	if (ctrl->do_unicast) {
@@ -2710,6 +2789,44 @@ exit:
 	return need_wait;
 }
 
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Feature, 2018/10/31,
+//add for dynamic mipi dsi clk
+static void mdss_dsi_clkrate_update(struct mdss_dsi_ctrl_pdata *ctrl)
+{
+	int rc = 0;
+	struct mdss_dsi_ctrl_pdata *sctrl = NULL;
+	struct mdss_panel_info *pinfo = &ctrl->panel_data.panel_info;
+
+	if (atomic_read(&ctrl->clkrate_change_pending)) {
+		if (pinfo->is_split_display) {
+			if (mdss_dsi_is_right_ctrl(ctrl))
+				return;
+			/* left ctrl to get right ctrl */
+			sctrl = mdss_dsi_get_other_ctrl(ctrl);
+		}
+		MDSS_XLOG(0x2984);
+		pr_debug("%s: forcing link clk stop and start clk refresh\n",
+							__func__);
+		MDSS_XLOG(0x1010);
+		rc = mdss_dsi_clk_force_toggle(ctrl->dsi_clk_handle, MDSS_DSI_LINK_CLK);
+		if (rc)
+			pr_err("clock toggle failed, rc = %d\n", rc);
+		MDSS_XLOG(sctrl,0x2020);
+		if (!rc && sctrl)
+			rc = mdss_dsi_clk_force_toggle(sctrl->dsi_clk_handle, MDSS_DSI_LINK_CLK);
+
+		if (!rc) {
+			pinfo->cached_clk_rate = pinfo->clk_rate;
+			atomic_set(&ctrl->clkrate_change_pending, 0);
+			if (sctrl)
+				atomic_set(&sctrl->clkrate_change_pending, 0);
+		}
+		MDSS_XLOG(0x225);
+	}
+}
+#endif /*VENDOR_EDIT*/
+
 int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 {
 	struct dcs_cmd_req *req;
@@ -2747,6 +2864,13 @@ int mdss_dsi_cmdlist_commit(struct mdss_dsi_ctrl_pdata *ctrl, int from_mdp)
 		/* make sure dsi_cmd_mdp is idle */
 		mdss_dsi_cmd_mdp_busy(ctrl);
 	}
+
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Feature, 2018/10/31,
+//add for dynamic mipi dsi clk
+	if (from_mdp && (!req))
+		mdss_dsi_clkrate_update(ctrl);
+#endif /*VENDOR_EDIT*/
 
 	/*
 	 * if secure display session is enabled

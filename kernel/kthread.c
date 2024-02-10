@@ -399,6 +399,25 @@ struct task_struct *kthread_create_on_cpu(int (*threadfn)(void *data),
 	return p;
 }
 
+#ifdef VENDOR_EDIT
+//jie.cheng@swdp.sh, 2016/07/04, let the cpu hotplug be safer
+static void __kthread_unpark(struct task_struct *k, struct kthread *kthread)
+{
+	/*
+	 * We clear the IS_PARKED bit here as we don't wait
+	 * until the task has left the park code. So if we'd
+	 * park before that happens we'd see the IS_PARKED bit
+	 * which might be about to be cleared.
+	 */
+	if (test_and_clear_bit(KTHREAD_IS_PARKED, &kthread->flags)) {
+		if (test_bit(KTHREAD_IS_PER_CPU, &kthread->flags))
+			__kthread_bind(k, kthread->cpu, TASK_PARKED);
+		clear_bit(KTHREAD_SHOULD_PARK, &kthread->flags);
+		wake_up_state(k, TASK_PARKED);
+	} else
+		clear_bit(KTHREAD_SHOULD_PARK, &kthread->flags);
+}
+#else
 static void __kthread_unpark(struct task_struct *k, struct kthread *kthread)
 {
 	clear_bit(KTHREAD_SHOULD_PARK, &kthread->flags);
@@ -414,6 +433,7 @@ static void __kthread_unpark(struct task_struct *k, struct kthread *kthread)
 		wake_up_state(k, TASK_PARKED);
 	}
 }
+#endif /* VENDOR_EDIT */
 
 /**
  * kthread_unpark - unpark a thread created by kthread_create().

@@ -803,6 +803,7 @@ long msm_vfe47_reset_hardware(struct vfe_device *vfe_dev,
 			reload_wm(vfe_dev, vfe_dev->vfe_base, 0x0011FFFF);
 	}
 
+#ifndef VENDOR_EDIT
 	if (blocking_call) {
 		rc = wait_for_completion_interruptible_timeout(
 			&vfe_dev->reset_complete, msecs_to_jiffies(100));
@@ -811,8 +812,17 @@ long msm_vfe47_reset_hardware(struct vfe_device *vfe_dev,
 				__LINE__);
 			vfe_dev->reset_pending = 0;
 		}
+#else
+	if (blocking_call) {
+		rc = wait_for_completion_interruptible_timeout(
+			&vfe_dev->reset_complete, msecs_to_jiffies(500));
+		if (rc <= 0) {
+			pr_err("%s:%d failed: reset timeout\n", __func__,
+				__LINE__);
+			vfe_dev->reset_pending = 0;
+		}
 	}
-
+#endif
 	return rc;
 }
 
@@ -2025,8 +2035,14 @@ int msm_vfe47_axi_halt(struct vfe_device *vfe_dev,
 		spin_unlock_irqrestore(&vfe_dev->halt_completion_lock, flags);
 		/* Halt AXI Bus Bridge */
 		msm_camera_io_w_mb(0x1, vfe_dev->vfe_base + 0x400);
+#ifndef VENDOR_EDIT
+/*modified by Jinshui.Liu@Camera 20170404 for [wait more time]*/
 		rc = wait_for_completion_interruptible_timeout(
 			&vfe_dev->halt_complete, msecs_to_jiffies(500));
+#else
+		rc = wait_for_completion_interruptible_timeout(
+			&vfe_dev->halt_complete, msecs_to_jiffies(600));
+#endif
 		if (rc <= 0)
 			pr_err("%s:VFE%d halt timeout rc=%d\n", __func__,
 				vfe_dev->pdev->id, rc);
@@ -2331,13 +2347,13 @@ void msm_vfe47_stats_cfg_ub(struct vfe_device *vfe_dev)
 	int i;
 	uint32_t ub_offset = 0;
 	uint32_t ub_size[VFE47_NUM_STATS_TYPE] = {
-		16, /* MSM_ISP_STATS_HDR_BE */
-		16, /* MSM_ISP_STATS_BG */
+		32, /* MSM_ISP_STATS_HDR_BE */
+		32, /* MSM_ISP_STATS_BG */
 		16, /* MSM_ISP_STATS_BF */
 		16, /* MSM_ISP_STATS_HDR_BHIST */
 		16, /* MSM_ISP_STATS_RS */
-		16, /* MSM_ISP_STATS_CS */
-		16, /* MSM_ISP_STATS_IHIST */
+		0, /* MSM_ISP_STATS_CS */
+		0, /* MSM_ISP_STATS_IHIST */
 		16, /* MSM_ISP_STATS_BHIST */
 		16, /* MSM_ISP_STATS_AEC_BG */
 	};

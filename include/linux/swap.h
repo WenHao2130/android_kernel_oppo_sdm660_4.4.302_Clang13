@@ -398,7 +398,11 @@ int add_swap_extent(struct swap_info_struct *sis, unsigned long start_page,
 		unsigned long nr_pages, sector_t start_block);
 int generic_swapfile_activate(struct swap_info_struct *, struct file *,
 		sector_t *);
-
+#if defined(VENDOR_EDIT) && defined(CONFIG_SWAP)
+/*Huacai.Zhou@Tech.Kernel.MM, 2020-01-13,add swap rss for lowmemkiller*/
+extern unsigned long get_swap_orig_data_nrpages(void);
+extern unsigned long get_swap_comp_pool_nrpages(void);
+#endif
 /* linux/mm/swap_state.c */
 extern struct address_space swapper_spaces[];
 #define swap_address_space(entry) (&swapper_spaces[swp_type(entry)])

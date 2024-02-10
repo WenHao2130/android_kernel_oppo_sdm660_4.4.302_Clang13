@@ -12,6 +12,13 @@
 #include <linux/cputime.h>
 #include <linux/tick.h>
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+// wenbin.liu@PSW.BSP.MM, 2018/05/02
+// Add for get cpu load
+#include <linux/delay.h>
+#include <soc/oppo/oppo_healthinfo.h>
+#endif /*VENDOR_EDIT*/
+
 #ifndef arch_irq_stat_cpu
 #define arch_irq_stat_cpu(cpu) 0
 #endif
@@ -45,6 +52,10 @@ static cputime64_t get_iowait_time(int cpu)
 
 static u64 get_idle_time(int cpu)
 {
+	#ifdef VENDOR_EDIT
+	// liangkun@Swdp.shanghai 2015/11/03 modify to get valid stat
+	return kcpustat_cpu(cpu).cpustat[CPUTIME_IDLE];
+	#else
 	u64 idle, idle_time = -1ULL;
 
 	if (cpu_online(cpu))
@@ -57,10 +68,15 @@ static u64 get_idle_time(int cpu)
 		idle = usecs_to_cputime64(idle_time);
 
 	return idle;
+	#endif
 }
 
 static u64 get_iowait_time(int cpu)
 {
+	#ifdef VENDOR_EDIT
+	// liangkun@Swdp.shanghai 2015/11/03 modify to get valid stat
+	return kcpustat_cpu(cpu).cpustat[CPUTIME_IOWAIT];
+	#else
 	u64 iowait, iowait_time = -1ULL;
 
 	if (cpu_online(cpu))
@@ -73,6 +89,7 @@ static u64 get_iowait_time(int cpu)
 		iowait = usecs_to_cputime64(iowait_time);
 
 	return iowait;
+	#endif
 }
 
 #endif
@@ -130,7 +147,12 @@ static int show_stat(struct seq_file *p, void *v)
 	seq_put_decimal_ull(p, ' ', cputime64_to_clock_t(guest_nice));
 	seq_putc(p, '\n');
 
+	#ifdef VENDOR_EDIT
+	// liangkun@Swdp.shanghai 2015/11/03 modify to get all cpus stat
+	for_each_present_cpu(i) {
+	#else
 	for_each_online_cpu(i) {
+	#endif
 		/* Copy values here to work around gcc-2.95.3, gcc-2.96 */
 		user = kcpustat_cpu(i).cpustat[CPUTIME_USER];
 		nice = kcpustat_cpu(i).cpustat[CPUTIME_NICE];
@@ -197,6 +219,64 @@ static const struct file_operations proc_stat_operations = {
 	.llseek		= seq_lseek,
 	.release	= single_release,
 };
+
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+// wenbin.liu@PSW.BSP.MM, 2018/05/02
+// Add for get cpu load
+struct cpu_load_stat {
+        u64 t_user;
+        u64 t_system;
+        u64 t_idle;
+        u64 t_iowait;
+        u64 t_irq;
+        u64 t_softirq;
+};
+
+int ohm_get_cur_cpuload(bool ctrl)
+{
+	int i;
+	struct cpu_load_stat cpu_load = { 0, 0, 0, 0, 0, 0};
+        struct cpu_load_stat cpu_load_temp = { 0, 0, 0, 0, 0, 0};
+        clock_t ct_user, ct_system, ct_idle, ct_iowait, ct_irq, ct_softirq, load, sum = 0;
+
+        if (!ctrl)
+                return -1;
+
+	for_each_online_cpu(i) {
+		cpu_load_temp.t_user += kcpustat_cpu(i).cpustat[CPUTIME_USER];
+		cpu_load_temp.t_system += kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
+		cpu_load_temp.t_idle += get_idle_time(i);
+		cpu_load_temp.t_iowait += get_iowait_time(i);
+		cpu_load_temp.t_irq += kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
+		cpu_load_temp.t_softirq += kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
+	}
+        msleep(25);
+	for_each_online_cpu(i) {
+		cpu_load.t_user += kcpustat_cpu(i).cpustat[CPUTIME_USER];
+		cpu_load.t_system += kcpustat_cpu(i).cpustat[CPUTIME_SYSTEM];
+		cpu_load.t_idle += get_idle_time(i);
+		cpu_load.t_iowait += get_iowait_time(i);
+		cpu_load.t_irq += kcpustat_cpu(i).cpustat[CPUTIME_IRQ];
+		cpu_load.t_softirq += kcpustat_cpu(i).cpustat[CPUTIME_SOFTIRQ];
+	}
+
+        ct_user = cputime64_to_clock_t(cpu_load.t_user) - cputime64_to_clock_t(cpu_load_temp.t_user);
+        ct_system = cputime64_to_clock_t(cpu_load.t_system) - cputime64_to_clock_t(cpu_load_temp.t_system);
+        ct_idle = cputime64_to_clock_t(cpu_load.t_idle) - cputime64_to_clock_t(cpu_load_temp.t_idle);
+        ct_iowait = cputime64_to_clock_t(cpu_load.t_iowait) - cputime64_to_clock_t(cpu_load_temp.t_iowait);
+        ct_irq = cputime64_to_clock_t(cpu_load.t_irq) - cputime64_to_clock_t(cpu_load_temp.t_irq);
+        ct_softirq = cputime64_to_clock_t(cpu_load.t_softirq) - cputime64_to_clock_t(cpu_load_temp.t_softirq);
+
+	sum = ct_user + ct_system + ct_idle + ct_iowait + ct_irq + ct_softirq;
+        load = ct_user + ct_system + ct_iowait + ct_irq + ct_softirq;
+
+	if (sum == 0)
+		return -1;
+
+	return 100 * load / sum;
+}
+
+#endif /*VENDOR_EDIT*/
 
 static int __init proc_stat_init(void)
 {

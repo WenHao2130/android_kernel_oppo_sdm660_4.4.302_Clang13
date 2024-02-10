@@ -79,3 +79,13 @@ obj-y				+= l3mdev/
 endif
 obj-$(CONFIG_IPC_ROUTER)	+= ipc_router/
 obj-$(CONFIG_RMNET_DATA) += rmnet_data/
+#ifdef VENDOR_EDIT
+#Junyuan.Huang@PSW.CN.WiFi.Network.internet.1197891, 2018/04/10,
+#Add code for appo sla function
+obj-y                   	+= oppo_sla/
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+#Yuan.Huang@PSW.CN.WiFi.Network.internet.1461349, 2018/06/18,
+#Add for WeChat lucky money recognition
+obj-y				+= oppo_nf_hooks/
+#endif /* VENDOR_EDIT */

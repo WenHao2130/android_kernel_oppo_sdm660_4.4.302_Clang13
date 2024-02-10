@@ -445,6 +445,10 @@ static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
 {
 	const struct hh_cache *hh;
 
+	#ifndef VENDOR_EDIT
+	//Wei.Wang@PSW.CN.WiFi.Network.internet.1357567, 2018/04/27,
+	//Remove for [1357567],some AP doesn't send arp when it needs to send data to DUT
+	//We remove this code to send arp more frequently to notify our mac to AP
 	if (dst->pending_confirm) {
 		unsigned long now = jiffies;
 
@@ -453,6 +457,7 @@ static inline int dst_neigh_output(struct dst_entry *dst, struct neighbour *n,
 		if (n->confirmed != now)
 			n->confirmed = now;
 	}
+	#endif /* VENDOR_EDIT */
 
 	hh = &n->hh;
 	if ((n->nud_state & NUD_CONNECTED) && hh->hh_len)

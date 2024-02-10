@@ -49,5 +49,12 @@ struct __compat_mtp_event {
 #define COMPAT_MTP_SEND_FILE_WITH_HEADER  _IOW('M', 4, \
 						struct __compat_mtp_file_range)
 #endif
+
+#ifdef VENDOR_EDIT
+//yan.chen@Swdp.shanghai, 2015/12/3, add mtp callback for hypnus
+extern int mtp_register_notifier(struct notifier_block *nb);
+extern int mtp_unregister_notifier(struct notifier_block *nb);
+#endif
+
 #endif
 #endif /* __LINUX_USB_F_MTP_H */

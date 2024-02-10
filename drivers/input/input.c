@@ -40,6 +40,18 @@ static DEFINE_IDA(input_ida);
 static LIST_HEAD(input_dev_list);
 static LIST_HEAD(input_handler_list);
 
+#ifdef VENDOR_EDIT
+//Tong.Han@Bsp.Group.Tp,2017/2/27,Modify for shortcut function.
+static unsigned int keyup_coordinat_change_count = 0;
+static bool keyup_timer_start = false;
+//extern bool flag_lcd_off;   //add for double tap homekey in suspend
+enum UPKEY_CODE{
+	KEYUP_MENU = 0x00,
+	KEYUP_HOMEPAGE = 0x01,
+	KEYUP_BACK = 0x02,
+};
+#endif/*VENDOR_EDIT*/
+
 /*
  * input_mutex protects access to both input_dev_list and input_handler_list.
  * This also causes input_[un]register_device and input_[un]register_handler
@@ -250,6 +262,12 @@ static int input_handle_abs_event(struct input_dev *dev,
 		if (*pold == *pval)
 			return INPUT_IGNORE_EVENT;
 
+#ifdef VENDOR_EDIT
+//Tong.Han@Bsp.Group.Tp,2017/3/9,Modify for shortcut function.
+		if (keyup_timer_start && (code == ABS_MT_POSITION_X || code == ABS_MT_POSITION_Y))
+			keyup_coordinat_change_count++;
+#endif/*VENDOR_EDIT*/
+
 		*pold = *pval;
 	}
 
@@ -261,6 +279,45 @@ static int input_handle_abs_event(struct input_dev *dev,
 
 	return INPUT_PASS_TO_HANDLERS;
 }
+
+#ifdef VENDOR_EDIT
+//Tong.Han@Bsp.Group.Tp,2017/2/27,Modify for shortcut function.
+static void keyup_report(struct input_dev *dev, __u16 code)
+{
+	if (is_event_supported(code, dev->keybit, KEY_MAX)) {
+		struct input_value vals[] =  {{EV_KEY, code, 0},
+                                      {EV_SYN, SYN_REPORT,0}};
+		__change_bit(code, dev->key);
+		pr_err("Shortcut--------> keyup_coordinat_change_count is %d!\n", keyup_coordinat_change_count);
+		if (keyup_coordinat_change_count > 2) {
+			vals[0].value = -1;
+		}
+		input_pass_values(dev, vals, ARRAY_SIZE(vals));
+	}
+}
+
+static void input_delay_keyup(unsigned long data)
+{
+	struct input_dev *dev = (void *) data;
+	unsigned long flags;
+	spin_lock_irqsave(&dev->event_lock, flags);
+	if (is_event_supported(KEY_MENU, dev->keybit, KEY_MAX)) {
+		if (test_bit(KEYUP_MENU, &(dev->keyup_data.keyup_flag)))
+			keyup_report(dev, KEY_MENU);
+	}
+	if (is_event_supported(KEY_HOMEPAGE, dev->keybit, KEY_MAX)) {
+		if (test_bit(KEYUP_HOMEPAGE, &(dev->keyup_data.keyup_flag)))
+			keyup_report(dev, KEY_HOMEPAGE);
+	}
+	if (is_event_supported(KEY_BACK, dev->keybit, KEY_MAX)) {
+		if (test_bit(KEYUP_BACK, &(dev->keyup_data.keyup_flag)))
+			keyup_report(dev, KEY_BACK);
+	}
+	dev->keyup_data.keyup_flag = 0;
+	keyup_timer_start = false;
+	spin_unlock_irqrestore(&dev->event_lock, flags);
+}
+#endif/*VENDOR_EDIT*/
 
 static int input_get_disposition(struct input_dev *dev,
 			  unsigned int type, unsigned int code, int *pval)
@@ -294,11 +351,31 @@ static int input_get_disposition(struct input_dev *dev,
 				break;
 			}
 
+			#ifndef VENDOR_EDIT
+			//Tong.Han@Bsp.Group.Tp,2017/2/27,Modify for shortcut function.
 			if (!!test_bit(code, dev->key) != !!value) {
-
 				__change_bit(code, dev->key);
 				disposition = INPUT_PASS_TO_HANDLERS;
 			}
+			#else
+			if (!!test_bit(code, dev->key) != !!value) {
+				//if (value == 0 && (code == KEY_MENU || code == KEY_BACK || code == KEY_HOMEPAGE) && (&dev->keyup_data.keyup_timer) && flag_lcd_off == 0) {
+				if (value == 0 && (code == KEY_MENU || code == KEY_BACK || code == KEY_HOMEPAGE) && (&dev->keyup_data.keyup_timer)) {
+					if (code == KEY_MENU)
+						set_bit(KEYUP_MENU,&(dev->keyup_data.keyup_flag));
+					else if (code == KEY_BACK)
+						set_bit(KEYUP_BACK,&(dev->keyup_data.keyup_flag));
+					else if (code == KEY_HOMEPAGE)
+						set_bit(KEYUP_HOMEPAGE,&(dev->keyup_data.keyup_flag));
+					keyup_coordinat_change_count = 0;
+					keyup_timer_start = true;
+					mod_timer(&(dev->keyup_data.keyup_timer),jiffies + msecs_to_jiffies(dev->keyup_data.keyup_delay));
+				} else {
+				    __change_bit(code, dev->key);
+					disposition = INPUT_PASS_TO_HANDLERS;
+				}
+			}
+			#endif/*VENDOR_EDIT*/
 		}
 		break;
 
@@ -851,16 +928,18 @@ static int input_default_setkeycode(struct input_dev *dev,
 		}
 	}
 
-	__clear_bit(*old_keycode, dev->keybit);
-	__set_bit(ke->keycode, dev->keybit);
-
-	for (i = 0; i < dev->keycodemax; i++) {
-		if (input_fetch_keycode(dev, i) == *old_keycode) {
-			__set_bit(*old_keycode, dev->keybit);
-			break; /* Setting the bit twice is useless, so break */
+	if (*old_keycode <= KEY_MAX) {
+		__clear_bit(*old_keycode, dev->keybit);
+		for (i = 0; i < dev->keycodemax; i++) {
+			if (input_fetch_keycode(dev, i) == *old_keycode) {
+				__set_bit(*old_keycode, dev->keybit);
+				/* Setting the bit twice is useless, so break */
+				break;
+			}
 		}
 	}
 
+	__set_bit(ke->keycode, dev->keybit);
 	return 0;
 }
 
@@ -916,9 +995,13 @@ int input_set_keycode(struct input_dev *dev,
 	 * Simulate keyup event if keycode is not present
 	 * in the keymap anymore
 	 */
-	if (test_bit(EV_KEY, dev->evbit) &&
-	    !is_event_supported(old_keycode, dev->keybit, KEY_MAX) &&
-	    __test_and_clear_bit(old_keycode, dev->key)) {
+	if (old_keycode > KEY_MAX) {
+		dev_warn(dev->dev.parent ?: &dev->dev,
+			 "%s: got too big old keycode %#x\n",
+			 __func__, old_keycode);
+	} else if (test_bit(EV_KEY, dev->evbit) &&
+		   !is_event_supported(old_keycode, dev->keybit, KEY_MAX) &&
+		   __test_and_clear_bit(old_keycode, dev->key)) {
 		struct input_value vals[] =  {
 			{ EV_KEY, old_keycode, 0 },
 			input_value_sync
@@ -1797,6 +1880,10 @@ struct input_dev *input_allocate_device(void)
 		device_initialize(&dev->dev);
 		mutex_init(&dev->mutex);
 		spin_lock_init(&dev->event_lock);
+		#ifdef VENDOR_EDIT
+		//Tong.Han@Bsp.Group.Tp,2017/2/27,Modify for shortcut function.
+		init_timer(&(dev->keyup_data.keyup_timer));
+		#endif/*VENDOR_EDIT*/
 		init_timer(&dev->timer);
 		INIT_LIST_HEAD(&dev->h_list);
 		INIT_LIST_HEAD(&dev->node);
@@ -2031,6 +2118,10 @@ static void __input_unregister_device(struct input_dev *dev)
 	WARN_ON(!list_empty(&dev->h_list));
 
 	del_timer_sync(&dev->timer);
+	#ifdef VENDOR_EDIT
+	//Tong.Han@Bsp.Group.Tp,2017/2/27,Modify for shortcut function.
+	del_timer_sync(&(dev->keyup_data.keyup_timer));
+	#endif/*VENDOR_EDIT*/
 	list_del_init(&dev->node);
 
 	input_wakeup_procfs_readers();
@@ -2133,6 +2224,14 @@ int input_register_device(struct input_dev *dev)
 	 */
 	if (!dev->rep[REP_DELAY] && !dev->rep[REP_PERIOD])
 		input_enable_softrepeat(dev, 250, 33);
+
+	#ifdef VENDOR_EDIT
+	//Tong.Han@Bsp.Group.Tp,2017/2/27,Modify for shortcut function.
+	dev->keyup_data.keyup_delay = 40;
+	dev->keyup_data.keyup_flag = 0;
+	dev->keyup_data.keyup_timer.data = (long) dev;
+	dev->keyup_data.keyup_timer.function = input_delay_keyup;
+	#endif/*VENDOR_EDIT*/
 
 	if (!dev->getkeycode)
 		dev->getkeycode = input_default_getkeycode;

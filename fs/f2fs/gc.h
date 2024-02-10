@@ -15,6 +15,7 @@
 						 */
 #define DEF_GC_THREAD_URGENT_SLEEP_TIME	500	/* 500 ms */
 #define DEF_GC_THREAD_MIN_SLEEP_TIME	30000	/* milliseconds */
+
 #define DEF_GC_THREAD_MAX_SLEEP_TIME	60000
 #define DEF_GC_THREAD_NOGC_SLEEP_TIME	300000	/* wait 5 min */
 #define LIMIT_INVALID_BLOCK	40 /* percentage over total user space */
@@ -28,6 +29,9 @@
 struct f2fs_gc_kthread {
 	struct task_struct *f2fs_gc_task;
 	wait_queue_head_t gc_wait_queue_head;
+#ifdef CONFIG_F2FS_OPPO_GC
+	wait_queue_head_t fggc_wait_queue;
+#endif
 
 	/* for gc sleep time */
 	unsigned int urgent_sleep_time;

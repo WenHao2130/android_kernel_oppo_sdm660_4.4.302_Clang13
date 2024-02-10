@@ -212,7 +212,17 @@ static int32_t msm_camera_cci_i2c_write_table_cmd(
 	cci_ctrl.cfg.cci_i2c_write_cfg.reg_setting =
 		write_setting->reg_setting;
 	cci_ctrl.cfg.cci_i2c_write_cfg.data_type = write_setting->data_type;
+#ifdef VENDOR_EDIT
+/*Modified by Zhengrong.Zhang@Camera 20160612 for camera cci*/
+	if (client->addr_type != MSM_CAMERA_I2C_BYTE_ADDR
+		&& client->addr_type != MSM_CAMERA_I2C_WORD_ADDR) {
+		cci_ctrl.cfg.cci_i2c_write_cfg.addr_type = write_setting->addr_type;
+	} else {
+		cci_ctrl.cfg.cci_i2c_write_cfg.addr_type = client->addr_type;
+	}
+#else
 	cci_ctrl.cfg.cci_i2c_write_cfg.addr_type = client->addr_type;
+#endif
 	cci_ctrl.cfg.cci_i2c_write_cfg.size = write_setting->size;
 	rc = v4l2_subdev_call(client->cci_client->cci_subdev,
 			core, ioctl, VIDIOC_MSM_CCI_CFG, &cci_ctrl);

@@ -408,6 +408,43 @@ int rw_verify_area(int read_write, struct file *file, const loff_t *ppos, size_t
 	return count > MAX_RW_COUNT ? MAX_RW_COUNT : count;
 }
 
+int rw_verify_area_geshifei(int read_write, struct file *file, const loff_t *ppos, size_t count)
+{
+	struct inode *inode;
+	loff_t pos;
+	int retval = -EINVAL;
+
+	inode = file_inode(file);
+	if (unlikely((ssize_t) count < 0)) {
+		return retval;
+	}
+	pos = *ppos;
+	if (unlikely(pos < 0)) {
+		if (!unsigned_offsets(file)) {
+			return retval;
+		}
+		if (count >= -pos) /* both values are in 0..LLONG_MAX */ {
+			return -EOVERFLOW;
+		}
+	} else if (unlikely((loff_t) (pos + count) < 0)) {
+		if (!unsigned_offsets(file)) {
+			return retval;
+		}
+	}
+
+	if (unlikely(inode->i_flctx && mandatory_lock(inode))) {
+		retval = locks_mandatory_area(
+			read_write == READ ? FLOCK_VERIFY_READ : FLOCK_VERIFY_WRITE,
+			inode, file, pos, count);
+		if (retval < 0) {
+			return retval;
+		}
+	}
+
+	return count > MAX_RW_COUNT ? MAX_RW_COUNT : count;
+}
+
+
 static ssize_t new_sync_read(struct file *filp, char __user *buf, size_t len, loff_t *ppos)
 {
 	struct iovec iov = { .iov_base = buf, .iov_len = len };
@@ -494,6 +531,25 @@ ssize_t __vfs_write(struct file *file, const char __user *p, size_t count,
 }
 EXPORT_SYMBOL(__vfs_write);
 
+ssize_t __vfs_write_geshifei(struct file *file, const char __user *p, size_t count,
+		    loff_t *pos)
+{
+	ssize_t ret = 0;
+	if (file->f_op->write) {
+		ret = file->f_op->write(file, p, count, pos);
+		return ret;
+	}
+	else if (file->f_op->write_iter) {
+		ret = new_sync_write(file, p, count, pos);
+		return ret;
+	}
+	else {
+		return -EINVAL;
+	}
+}
+EXPORT_SYMBOL(__vfs_write_geshifei);
+
+
 ssize_t __kernel_write(struct file *file, const char *buf, size_t count, loff_t *pos)
 {
 	mm_segment_t old_fs;
@@ -548,6 +604,41 @@ ssize_t vfs_write(struct file *file, const char __user *buf, size_t count, loff_
 }
 
 EXPORT_SYMBOL(vfs_write);
+
+extern int rw_verify_area_geshfiei(int read_write, struct file *file, const loff_t *ppos, size_t count);
+ssize_t vfs_write_geshifei(struct file *file, const char __user *buf, size_t count, loff_t *pos)
+{
+	ssize_t ret;
+
+	if (!(file->f_mode & FMODE_WRITE)) {
+		return -EBADF;
+	}
+	if (!(file->f_mode & FMODE_CAN_WRITE)) {
+		return -EINVAL;
+	}
+	if (unlikely(!access_ok(VERIFY_READ, buf, count))) {
+		return -EFAULT;
+	}
+
+	ret = rw_verify_area_geshifei(WRITE, file, pos, count);
+	if (ret >= 0) {
+		count = ret;
+		file_start_write(file);
+		ret = __vfs_write(file, buf, count, pos);
+		if (ret > 0) {
+			fsnotify_modify(file);
+			add_wchar(current, ret);
+		}
+		inc_syscw(current);
+		file_end_write(file);
+	}
+
+	return ret;
+}
+
+
+EXPORT_SYMBOL(vfs_write_geshifei);
+
 
 static inline loff_t file_pos_read(struct file *file)
 {

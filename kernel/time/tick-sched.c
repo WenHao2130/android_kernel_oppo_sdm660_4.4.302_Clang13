@@ -147,6 +147,19 @@ static void tick_sched_do_timer(ktime_t now)
 		tick_do_timer_cpu = cpu;
 #endif
 
+#ifdef VENDOR_EDIT
+//xiaocheng.li@Swdp.shanghai, 2016/2/26, Fix bug that Tick is stopped.
+	/*
+	 * Let the last CPU update tick if tick_do_timer_cpu is not updated
+	 * properly by chance.
+	 */
+	if (tick_do_timer_cpu != cpu && num_online_cpus() <= 1) {
+		pr_warning("Set tick_do_timer_cpu to cpu:%d (ori:%d) forcibly\n",
+			cpu, tick_do_timer_cpu);
+		tick_do_timer_cpu = cpu;
+	}
+#endif
+
 	/* Check, if the jiffies need an update */
 	if (tick_do_timer_cpu == cpu)
 		tick_do_update_jiffies64(now);

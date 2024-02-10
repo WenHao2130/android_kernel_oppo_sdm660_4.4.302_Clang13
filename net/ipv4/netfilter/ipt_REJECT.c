@@ -30,6 +30,13 @@ MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Netfilter Core Team <coreteam@netfilter.org>");
 MODULE_DESCRIPTION("Xtables: packet \"rejection\" target for IPv4");
 
+#ifdef VENDOR_EDIT
+//Junyuan.Huang@PSW.CN.WiFi.Network.internet.1197891, 2018/04/10,
+//Add code for appo sla function
+void (*mark_streams_for_iptables_reject)(struct sk_buff *skb,enum ipt_reject_with reject_type) = NULL;
+EXPORT_SYMBOL(mark_streams_for_iptables_reject);
+#endif /* VENDOR_EDIT */
+
 static unsigned int
 reject_tg(struct sk_buff *skb, const struct xt_action_param *par)
 {
@@ -64,6 +71,13 @@ reject_tg(struct sk_buff *skb, const struct xt_action_param *par)
 		/* Doesn't happen. */
 		break;
 	}
+#ifdef VENDOR_EDIT
+//Junyuan.Huang@PSW.CN.WiFi.Network.internet.1197891, 2018/04/10,
+//Add code for appo sla function	for mark streams deal with iptables reject
+	if (mark_streams_for_iptables_reject) {
+		mark_streams_for_iptables_reject(skb,reject->with);
+	}
+#endif /* VENDOR_EDIT */
 
 	return NF_DROP;
 }

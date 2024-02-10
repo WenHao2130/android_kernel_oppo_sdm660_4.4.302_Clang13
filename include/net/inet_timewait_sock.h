@@ -72,6 +72,12 @@ struct inet_timewait_sock {
 #define tw_num			__tw_common.skc_num
 #define tw_cookie		__tw_common.skc_cookie
 #define tw_dr			__tw_common.skc_tw_dr
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//add for count TCP_TIME_WAIT state to corresponding process
+#define tw_uid			__tw_common.skcm_uid
+#define tw_cmdline			__tw_common.skc_cmdline
+#endif /* VENDOR_EDIT */
 
 	int			tw_timeout;
 	volatile unsigned char	tw_substate;

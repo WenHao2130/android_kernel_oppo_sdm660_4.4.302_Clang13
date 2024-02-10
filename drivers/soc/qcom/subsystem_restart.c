@@ -39,6 +39,13 @@
 
 #include <asm/current.h>
 
+//#ifdef VENDOR_EDIT
+//Canjie.Zheng@Swdp.Android.OppoDebug.CriticalLog, 2016/06/03,add for critical
+//record subSystem crash
+//#include "../../../include/soc/oppo/mmkey_log.h"
+#include <soc/oppo/mmkey_log.h>
+//#endif /* VENDOR_EDIT */
+
 #include "peripheral-loader.h"
 
 #define DISABLE_SSR 0x9889deed
@@ -1079,6 +1086,21 @@ static void device_restart_work_hdlr(struct work_struct *work)
 							dev->desc->name);
 }
 
+#ifdef VENDOR_EDIT //yixue.ge add for modem subsystem crash
+int subsystem_restart_dev_level(struct subsys_device *dev,int restart_level)
+{
+	int rc = 0;
+	int restart_level_bak = dev->restart_level;
+	if(restart_level >= 0)
+		dev->restart_level = restart_level;
+
+	rc = subsystem_restart_dev(dev);
+
+	dev->restart_level = restart_level_bak;
+	return rc;
+}
+#endif
+
 int subsystem_restart_dev(struct subsys_device *dev)
 {
 	const char *name;
@@ -1107,6 +1129,12 @@ int subsystem_restart_dev(struct subsys_device *dev)
 	pr_info("Restart sequence requested for %s, restart_level = %s.\n",
 		name, restart_levels[dev->restart_level]);
 
+    //#ifdef VENDOR_EDIT
+    //Canjie.Zheng@Swdp.Android.OppoDebug.CriticalLog, 2016/06/03,add for critical
+    //record subSystem crash
+    mm_keylog_write("subSystem restart", name, TYPE_SUBSYSTEM_RESTART);
+    //#endif /*VENDOR_EDIT*/
+	
 	if (disable_restart_work == DISABLE_SSR) {
 		pr_warn("subsys-restart: Ignoring restart request for %s.\n",
 									name);
@@ -1644,6 +1672,16 @@ struct subsys_device *subsys_register(struct subsys_desc *desc)
 	subsys->dev.bus = &subsys_bus_type;
 	subsys->dev.release = subsys_device_release;
 	subsys->notif_state = -1;
+#ifdef VENDOR_EDIT
+	/*YiXue.Ge@PSW.BSP.Kernel.Driver,2017/05/15,
+	 * Add for init subsyst restart level as RESET_SUBSYS_COUPLED at mp build
+	 */
+	#ifndef CONFIG_OPPO_DAILY_BUILD
+		#ifndef CONFIG_OPPO_SPECIAL_BUILD
+		subsys->restart_level = RESET_SUBSYS_COUPLED;
+		#endif
+	#endif
+#endif
 	subsys->desc->sysmon_pid = -1;
 	strlcpy(subsys->desc->fw_name, desc->name,
 			sizeof(subsys->desc->fw_name));

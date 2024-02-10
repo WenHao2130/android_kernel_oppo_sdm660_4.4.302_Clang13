@@ -4179,6 +4179,88 @@ static int mmc_rescan_try_freq(struct mmc_host *host, unsigned freq)
 	return -EIO;
 }
 
+#if defined(MOUNT_EXSTORAGE_IF)
+/*ye.zhang@BSP, 2016-05-01, add for CTSI support external storage or not*/
+enum eStorage_prop_value
+{
+	EXTERNAL_STORAGE_UNKNOWN = -1,
+	EXTERNAL_STORAGE_UNSUPPORT = 0,
+	EXTERNAL_STORAGE_SUPPORT = 1,
+};
+struct exStorage_prop_struct
+{
+	int external_storage_support;
+	int prev_support_value;
+	struct mmc_host *host;
+};
+struct exStorage_prop_struct exStor_prop;
+
+static ssize_t support_show(struct device *dev,
+		struct device_attribute *attr, char *buf)
+{
+	struct mmc_host *host = exStor_prop.host;
+
+	if (!host)
+		return -EINVAL;
+
+	printk(KERN_EMERG"zhye::%s::prev_value=%d  new_value=%d\n",
+		mmc_hostname(host), exStor_prop.prev_support_value, exStor_prop.external_storage_support);
+
+	return snprintf(buf, PAGE_SIZE, "%d\n",
+			exStor_prop.external_storage_support);
+}
+
+static ssize_t support_store(struct device *dev,
+		struct device_attribute *attr, const char *buf, size_t count)
+{
+	struct mmc_host *host = exStor_prop.host;
+	int value;
+
+	if (!host)
+		return -EINVAL;
+
+	sscanf(buf,"%d",&value);
+
+	if (value >= -1 && value <= 1 )
+		exStor_prop.external_storage_support = value;
+	else{
+		printk(KERN_EMERG"zhye::%s::invalid value %d, do nothing\n",__func__,value);
+		return count;
+	}
+
+/*	if (exStor_prop.external_storage_support != EXTERNAL_STORAGE_UNKNOWN)
+		wake_up(&exStor_prop.prop_waitq);*/
+
+	if (exStor_prop.external_storage_support != exStor_prop.prev_support_value)
+	{
+		if (exStor_prop.external_storage_support == EXTERNAL_STORAGE_UNKNOWN
+			|| (exStor_prop.external_storage_support == EXTERNAL_STORAGE_SUPPORT && exStor_prop.prev_support_value == EXTERNAL_STORAGE_UNKNOWN))
+		{
+			printk(KERN_EMERG"zhye::%s::do nothing because default state is support\n", __func__);
+			exStor_prop.prev_support_value = exStor_prop.external_storage_support;
+		}
+		else{
+			printk(KERN_EMERG"zhye::%s::schedule rescan\n",__func__);
+			mmc_detect_change(host, 0);
+		}
+	}
+	printk(KERN_EMERG"zhye::%s::prev_value=%d  new_value=%d\n",
+			mmc_hostname(host), exStor_prop.prev_support_value, exStor_prop.external_storage_support);
+	return count;
+}
+static DEVICE_ATTR(exStorage_support, S_IRUGO | S_IWUSR,
+		support_show, support_store);
+
+static struct attribute *eStorage_property_attrs[] = {
+	&dev_attr_exStorage_support.attr,
+	NULL,
+};
+static struct attribute_group eStorage_property_attr_grp = {
+	.attrs = eStorage_property_attrs,
+};
+
+#endif//MOUNT_EXSTORAGE_IF
+
 int _mmc_detect_card_removed(struct mmc_host *host)
 {
 	int ret;
@@ -4216,7 +4298,15 @@ int _mmc_detect_card_removed(struct mmc_host *host)
 					mmc_hostname(host));
 		}
 	}
-
+#if defined(MOUNT_EXSTORAGE_IF)
+/*ye.zhang@BSP, 2016-05-01, add for CTSI support external storage or not*/
+	if ((ret == 0) && (!strcmp(mmc_hostname(host), "mmc1")) && (exStor_prop.external_storage_support == EXTERNAL_STORAGE_UNSUPPORT))
+	{
+		ret = -1;
+		mmc_card_set_removed(host->card);
+		pr_debug("%s: card remove detected\n", mmc_hostname(host));
+	}
+#endif//MOUNT_EXSTORAGE_IF
 	return ret;
 }
 
@@ -4289,6 +4379,17 @@ void mmc_rescan(struct work_struct *work)
 	if ((host->caps & MMC_CAP_NONREMOVABLE) && host->rescan_entered)
 		return;
 	host->rescan_entered = 1;
+#if defined(MOUNT_EXSTORAGE_IF)
+	/*ye.zhang@BSP, 2016-05-01, add for CTSI support external storage or not*/
+		if (!(host->caps & MMC_CAP_NONREMOVABLE) && (!strcmp(mmc_hostname(host), "mmc1")))
+		{
+			if ((exStor_prop.external_storage_support == EXTERNAL_STORAGE_UNSUPPORT)
+				&&(exStor_prop.prev_support_value == EXTERNAL_STORAGE_UNSUPPORT))
+					return;
+
+			exStor_prop.prev_support_value = exStor_prop.external_storage_support;
+		}
+#endif//MOUNT_EXSTORAGE_IF
 
 	mmc_bus_get(host);
 
@@ -4313,8 +4414,14 @@ void mmc_rescan(struct work_struct *work)
 
 	/* if there still is a card present, stop here */
 	if (host->bus_ops != NULL) {
-		mmc_bus_put(host);
-		goto out;
+#if defined(MOUNT_EXSTORAGE_IF)
+/*ye.zhang@BSP, 2016-05-01, add for CTSI support external storage or not*/
+		if (strcmp(mmc_hostname(host), "mmc1") || exStor_prop.external_storage_support != EXTERNAL_STORAGE_UNSUPPORT)
+#endif//MOUNT_EXSTORAGE_IF
+		{
+			mmc_bus_put(host);
+			goto out;
+		}
 	}
 
 	/*
@@ -4323,8 +4430,13 @@ void mmc_rescan(struct work_struct *work)
 	 */
 	mmc_bus_put(host);
 
-	if (!(host->caps & MMC_CAP_NONREMOVABLE) && host->ops->get_cd &&
-			host->ops->get_cd(host) == 0) {
+	if ((!(host->caps & MMC_CAP_NONREMOVABLE) && host->ops->get_cd &&
+			host->ops->get_cd(host) == 0)
+#if defined(MOUNT_EXSTORAGE_IF)
+/*ye.zhang@BSP, 2016-05-01, add for CTSI support external storage or not*/
+		|| (!strcmp(mmc_hostname(host), "mmc1") && exStor_prop.external_storage_support == EXTERNAL_STORAGE_UNSUPPORT)
+#endif//MOUNT_EXSTORAGE_IF
+			) {
 		mmc_claim_host(host);
 		mmc_power_off(host);
 		mmc_release_host(host);
@@ -4354,6 +4466,15 @@ void mmc_start_host(struct mmc_host *host)
 
 	mmc_gpiod_request_cd_irq(host);
 	mmc_release_host(host);
+#if defined(MOUNT_EXSTORAGE_IF)
+/*ye.zhang@BSP, 2016-02-26, add for CTSI support external storage or not*/
+	if (!strcmp(mmc_hostname(host),"mmc1"))
+	{
+		if (exStor_prop.host == NULL)
+			exStor_prop.host = host;
+		printk(KERN_EMERG"%s sysfs_create_group return %d\n",__func__, sysfs_create_group(&host->class_dev.kobj,&eStorage_property_attr_grp));
+	}
+#endif//MOUNT_EXSTORAGE_IF
 	_mmc_detect_change(host, 0, false);
 }
 
@@ -4369,7 +4490,11 @@ void mmc_stop_host(struct mmc_host *host)
 		disable_irq(host->slot.cd_irq);
 
 	host->rescan_disable = 1;
+#ifndef VENDOR_EDIT //yixue.ge@bsp.drv modify
 	cancel_delayed_work_sync(&host->detect);
+#else
+	cancel_delayed_work(&host->detect);
+#endif	
 	mmc_flush_scheduled_work();
 
 	/* clear pm flags now and let card drivers set them as needed */
@@ -4631,6 +4756,12 @@ static int __init mmc_init(void)
 	if (!workqueue)
 		return -ENOMEM;
 
+#if defined(MOUNT_EXSTORAGE_IF)
+/*ye.zhang@BSP, 2016-05-01, add for CTSI support external storage or not*/
+	exStor_prop.external_storage_support = EXTERNAL_STORAGE_UNKNOWN;
+	exStor_prop.prev_support_value= EXTERNAL_STORAGE_UNKNOWN;
+	exStor_prop.host = NULL;
+#endif//MOUNT_EXSTORAGE_IF
 	ret = mmc_register_bus();
 	if (ret)
 		goto destroy_workqueue;

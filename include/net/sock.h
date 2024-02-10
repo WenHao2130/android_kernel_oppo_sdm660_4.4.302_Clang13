@@ -197,6 +197,19 @@ struct sock_common {
 	struct proto		*skc_prot;
 	possible_net_t		skc_net;
 
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//add for count TCP_TIME_WAIT state to corresponding process
+	uid_t skcm_uid;
+	char skc_cmdline[TASK_COMM_LEN];
+#endif /* VENDOR_EDIT */
+
+	//#ifdef VENDOR_EDIT
+	//Junyuan.Huang@PSW.CN.WiFi.Network.internet.1197891, 2018/04/10,
+	//Add code for appo sla function
+	u32 skc_oppo_mark;
+	//#endif /* VENDOR_EDIT */
+
 #if IS_ENABLED(CONFIG_IPV6)
 	struct in6_addr		skc_v6_daddr;
 	struct in6_addr		skc_v6_rcv_saddr;
@@ -354,6 +367,17 @@ struct sock {
 #define sk_incoming_cpu		__sk_common.skc_incoming_cpu
 #define sk_flags		__sk_common.skc_flags
 #define sk_rxhash		__sk_common.skc_rxhash
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//add for count TCP_TIME_WAIT state to corresponding process
+#define skc_uid			__sk_common.skcm_uid
+#define sk_cmdline			__sk_common.skc_cmdline
+#endif /* VENDOR_EDIT */
+//#ifdef VENDOR_EDIT
+//Junyuan.Huang@PSW.CN.WiFi.Network.internet.1197891, 2018/04/10,
+//Add code for appo sla function
+#define oppo_sla_mark   __sk_common.skc_oppo_mark
+//#endif /* VENDOR_EDIT */
 
 	socket_lock_t		sk_lock;
 	struct sk_buff_head	sk_receive_queue;

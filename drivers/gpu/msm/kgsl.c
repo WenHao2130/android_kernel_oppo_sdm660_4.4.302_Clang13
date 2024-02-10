@@ -30,6 +30,12 @@
 #include <linux/security.h>
 #include <linux/compat.h>
 #include <linux/ctype.h>
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/01/22,
+ * kgsl use reserve area
+ */
+#include <linux/resmap_account.h>
+#endif
 
 #include "kgsl.h"
 #include "kgsl_debugfs.h"
@@ -42,6 +48,10 @@
 #include "kgsl_sync.h"
 #include "kgsl_compat.h"
 #include "kgsl_pool.h"
+#ifdef VENDOR_EDIT
+/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2017/11/25  Add for keylog */
+#include <soc/oppo/mmkey_log.h>
+#endif /*VENDOR_EDIT*/
 
 #undef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX "kgsl."
@@ -328,7 +338,7 @@ kgsl_mem_entry_destroy(struct kref *kref)
 			    entry->memdesc.sgt->nents, i) {
 			page = sg_page(sg);
 			for (j = 0; j < (sg->length >> PAGE_SHIFT); j++)
-				set_page_dirty(nth_page(page, j));
+				set_page_dirty_lock(nth_page(page, j));
 		}
 	}
 
@@ -1082,8 +1092,8 @@ static int kgsl_close_device(struct kgsl_device *device)
 		/* Wait for the active count to go to 0 */
 		kgsl_active_count_wait(device, 0);
 
-		/* Fail if the wait times out */
-		BUG_ON(atomic_read(&device->active_cnt) > 0);
+		while (kgsl_active_count_wait(device, 0))
+		WARN(1, "Waiting for active context count to become 0\n");
 
 		result = kgsl_pwrctrl_change_state(device, KGSL_STATE_INIT);
 	}
@@ -3306,10 +3316,14 @@ long kgsl_ioctl_sparse_phys_alloc(struct kgsl_device_private *dev_priv,
 	unsigned int cmd, void *data)
 {
 	struct kgsl_process_private *process = dev_priv->process_priv;
+	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_sparse_phys_alloc *param = data;
 	struct kgsl_mem_entry *entry;
 	int ret;
 	int id;
+
+	if (!(device->flags & KGSL_FLAG_SPARSE))
+		return -ENOTSUPP;
 
 	ret = _sparse_alloc_param_sanity_check(param->size, param->pagesize);
 	if (ret)
@@ -3389,8 +3403,12 @@ long kgsl_ioctl_sparse_phys_free(struct kgsl_device_private *dev_priv,
 	unsigned int cmd, void *data)
 {
 	struct kgsl_process_private *process = dev_priv->process_priv;
+	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_sparse_phys_free *param = data;
 	struct kgsl_mem_entry *entry;
+
+	if (!(device->flags & KGSL_FLAG_SPARSE))
+		return -ENOTSUPP;
 
 	entry = kgsl_sharedmem_find_id_flags(process, param->id,
 			KGSL_MEMFLAGS_SPARSE_PHYS);
@@ -3421,9 +3439,13 @@ long kgsl_ioctl_sparse_virt_alloc(struct kgsl_device_private *dev_priv,
 	unsigned int cmd, void *data)
 {
 	struct kgsl_process_private *private = dev_priv->process_priv;
+	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_sparse_virt_alloc *param = data;
 	struct kgsl_mem_entry *entry;
 	int ret;
+
+	if (!(device->flags & KGSL_FLAG_SPARSE))
+		return -ENOTSUPP;
 
 	ret = _sparse_alloc_param_sanity_check(param->size, param->pagesize);
 	if (ret)
@@ -3464,8 +3486,12 @@ long kgsl_ioctl_sparse_virt_free(struct kgsl_device_private *dev_priv,
 	unsigned int cmd, void *data)
 {
 	struct kgsl_process_private *process = dev_priv->process_priv;
+	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_sparse_virt_free *param = data;
 	struct kgsl_mem_entry *entry = NULL;
+
+	if (!(device->flags & KGSL_FLAG_SPARSE))
+		return -ENOTSUPP;
 
 	entry = kgsl_sharedmem_find_id_flags(process, param->id,
 			KGSL_MEMFLAGS_SPARSE_VIRT);
@@ -3813,6 +3839,7 @@ long kgsl_ioctl_sparse_bind(struct kgsl_device_private *dev_priv,
 		unsigned int cmd, void *data)
 {
 	struct kgsl_process_private *private = dev_priv->process_priv;
+	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_sparse_bind *param = data;
 	struct kgsl_sparse_binding_object obj;
 	struct kgsl_mem_entry *virt_entry;
@@ -3820,6 +3847,9 @@ long kgsl_ioctl_sparse_bind(struct kgsl_device_private *dev_priv,
 	void __user *ptr;
 	int ret = 0;
 	int i = 0;
+
+	if (!(device->flags & KGSL_FLAG_SPARSE))
+		return -ENOTSUPP;
 
 	ptr = (void __user *) (uintptr_t) param->list;
 
@@ -3875,6 +3905,9 @@ long kgsl_ioctl_gpu_sparse_command(struct kgsl_device_private *dev_priv,
 	struct kgsl_drawobj_sparse *sparseobj;
 	long result;
 	unsigned int i = 0;
+
+	if (!(device->flags & KGSL_FLAG_SPARSE))
+		return -ENOTSUPP;
 
 	/* Make sure sparse and syncpoint count isn't too big */
 	if (param->numsparse > KGSL_MAX_SPARSE ||
@@ -4306,13 +4339,29 @@ static unsigned long _gpu_find_svm(struct kgsl_process_private *private,
 }
 
 /* Search top down in the CPU VM region for a free address */
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+ * get the unmap area from resrved area
+ */
+static unsigned long _cpu_get_unmapped_area(unsigned long bottom,
+		unsigned long top, unsigned long len, unsigned long align,
+		unsigned long mmap_flags)
+#else
 static unsigned long _cpu_get_unmapped_area(unsigned long bottom,
 		unsigned long top, unsigned long len, unsigned long align)
+#endif
 {
 	struct vm_unmapped_area_info info;
 	unsigned long addr, err;
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+	/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+	 * get the unmap area from resrved area
+	 */
+	info.flags = VM_UNMAPPED_AREA_TOPDOWN|mmap_flags;
+#else
 	info.flags = VM_UNMAPPED_AREA_TOPDOWN;
+#endif
 	info.low_limit = bottom;
 	info.high_limit = top;
 	info.length = len;
@@ -4328,17 +4377,35 @@ static unsigned long _cpu_get_unmapped_area(unsigned long bottom,
 	return err ? err : addr;
 }
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+ * get unmaped area from normal or reserved vma, decide by mmap_flags
+ */
+static unsigned long _search_range(struct kgsl_process_private *private,
+		struct kgsl_mem_entry *entry,
+		unsigned long start, unsigned long end,
+		unsigned long len, uint64_t align, unsigned long mmap_flags)
+#else
 static unsigned long _search_range(struct kgsl_process_private *private,
 		struct kgsl_mem_entry *entry,
 		unsigned long start, unsigned long end,
 		unsigned long len, uint64_t align)
+#endif
 {
 	unsigned long cpu, gpu = end, result = -ENOMEM;
 
 	while (gpu > start) {
 		/* find a new empty spot on the CPU below the last one */
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+		/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+		 * use reserved area
+		 */
+		cpu = _cpu_get_unmapped_area(start, gpu, len,
+				(unsigned long) align, mmap_flags);
+#else
 		cpu = _cpu_get_unmapped_area(start, gpu, len,
 			(unsigned long) align);
+#endif
 		if (IS_ERR_VALUE(cpu)) {
 			result = cpu;
 			break;
@@ -4379,6 +4446,80 @@ static unsigned long _search_range(struct kgsl_process_private *private,
 	}
 	return result;
 }
+
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+ * try to get unmap area from reserved area
+ */
+static unsigned long try_reserved_area(struct mm_struct *mm,
+		struct kgsl_process_private *private,
+		struct kgsl_mem_entry *entry,
+		unsigned long len, uint64_t align)
+{
+	struct vm_area_struct *reserve_vma;
+	unsigned long start, end;
+	unsigned long result = -ENOMEM;
+	struct vm_area_struct *vma;
+
+	reserve_vma = mm->reserve_vma;
+	if (reserve_vma) {
+		count_resmap_event(RESMAP_ACTION);
+
+		start = reserve_vma->vm_start;
+		end = reserve_vma->vm_end;
+
+		if (len > (end - start)) {
+			count_resmap_event(RESMAP_FAIL);
+			return result;
+		}
+
+		result = _search_range(private, entry, start, end, len, align,
+				VM_UNMAPPED_AREA_RESERVED);
+
+		if (IS_ERR_VALUE(result)) {
+			static DEFINE_RATELIMIT_STATE(try_reserve_fail_rs,
+					5*HZ, 8);
+			unsigned long chunk, chunk_start;
+			unsigned long used_size, vma_size, lastend;
+
+			count_resmap_event(RESMAP_FAIL);
+			if (__ratelimit(&try_reserve_fail_rs)) {
+				used_size = 0;
+				lastend = start;
+				chunk = 0;
+				chunk_start = 0;
+				for (vma = mm->reserve_mmap; vma;
+						vma = vma->vm_next) {
+					vma_size = vma->vm_end - vma->vm_start;
+					if ((vma->vm_start - lastend) >	chunk) {
+						chunk = vma->vm_start - lastend;
+						chunk_start = lastend;
+					}
+					lastend = vma->vm_end;
+					used_size += vma_size;
+				}
+
+				if ((end - lastend) >	chunk) {
+					chunk = end - lastend;
+					chunk_start = lastend;
+				}
+
+				pr_err("emergency! current:%s pid:%d leader:%s result:%lx reserve_vma:%p(%lu) alloc len:%luKB start:0x%lx end:0x%lx reserve_map_count:%d used_size:%luKB chunk:%luKB chunk_start:%#lx align:%#llx high:%#lx\n",
+					current->comm, current->pid,
+					current->group_leader->comm,
+					result, reserve_vma, mm->backed_vm_size,
+					len>>10, start, end,
+					mm->reserve_map_count, used_size>>10,
+					chunk>>10, chunk_start, align,
+					mm->reserve_highest_vm_end);
+			}
+		} else
+			count_resmap_event(RESMAP_SUCCESS);
+	}
+
+	return result;
+}
+#endif
 
 static unsigned long _get_svm_area(struct kgsl_process_private *private,
 		struct kgsl_mem_entry *entry, unsigned long hint,
@@ -4425,6 +4566,20 @@ static unsigned long _get_svm_area(struct kgsl_process_private *private,
 
 		vma = find_vma(current->mm, addr);
 
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+		/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+		 * while vma is NULL, check whether the addr is valid in
+		 * reserve area or not.
+		 */
+		if ((!vma && check_valid_reserve_addr(current->mm, addr, addr+len)) ||
+				(vma && ((addr + len) <= vma->vm_start))) {
+			result = _gpu_set_svm_region(private, entry, addr, len);
+
+			/* On failure drop down to keep searching */
+			if (!IS_ERR_VALUE(result))
+				return result;
+		}
+#else
 		if (vma == NULL || ((addr + len) <= vma->vm_start)) {
 			result = _gpu_set_svm_region(private, entry, addr, len);
 
@@ -4432,6 +4587,7 @@ static unsigned long _get_svm_area(struct kgsl_process_private *private,
 			if (!IS_ERR_VALUE(result))
 				return result;
 		}
+#endif
 	} else {
 		/* no hint, start search at the top and work down */
 		addr = end & ~(align - 1);
@@ -4441,12 +4597,38 @@ static unsigned long _get_svm_area(struct kgsl_process_private *private,
 	 * Search downwards from the hint first. If that fails we
 	 * must try to search above it.
 	 */
+#if defined(VENDOR_EDIT) && defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+	/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/03/18,
+	 * try to get unmap area from reserved area
+	 */
+	result = _search_range(private, entry, start, addr, len, align, 0);
+	if (IS_ERR_VALUE(result)) {
+		if (hint != 0)
+			result = _search_range(private, entry, addr, end, len,
+					align, 0);
+
+		if (IS_ERR_VALUE(result))
+			result = try_reserved_area(current->mm, private,
+					entry, len, align);
+	}
+#else
 	result = _search_range(private, entry, start, addr, len, align);
 	if (IS_ERR_VALUE(result) && hint != 0)
 		result = _search_range(private, entry, addr, end, len, align);
+#endif
 
 	return result;
 }
+#ifdef VENDOR_EDIT
+/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2018/06/08  Add for keylog */
+static DEFINE_MUTEX(kgsl_failed_mutex);
+#define FAILED_PID_CNT 20
+static int ucm_index = 0;
+static pid_t ucm[FAILED_PID_CNT];
+
+static int nucm_index = 0;
+static pid_t nucm[FAILED_PID_CNT];
+#endif
 
 static unsigned long
 kgsl_get_unmapped_area(struct file *file, unsigned long addr,
@@ -4459,6 +4641,11 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 	struct kgsl_process_private *private = dev_priv->process_priv;
 	struct kgsl_device *device = dev_priv->device;
 	struct kgsl_mem_entry *entry = NULL;
+	#ifdef VENDOR_EDIT
+	/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2018/06/08  Add for keylog */
+	int i = 0;
+	int saved = 0;
+	#endif
 
 	if (vma_offset == (unsigned long) device->memstore.gpuaddr)
 		return get_unmapped_area(NULL, addr, len, pgoff, flags);
@@ -4475,17 +4662,82 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 
 	if (!kgsl_memdesc_use_cpu_map(&entry->memdesc)) {
 		val = get_unmapped_area(NULL, addr, len, 0, flags);
+#ifndef VENDOR_EDIT
+/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2017/11/25  Add for keylog */
 		if (IS_ERR_VALUE(val))
 			KGSL_DRV_ERR_RATELIMIT(device,
 				"get_unmapped_area: pid %d addr %lx pgoff %lx len %ld failed error %d\n",
 				private->pid, addr, pgoff, len, (int) val);
+#else
+		if (IS_ERR_VALUE(val)) {
+			KGSL_DRV_ERR_RATELIMIT(device,
+				"get_unmapped_area: pid %d:%s addr %lx pgoff %lx len %ld failed error %d\n",
+				private->pid, private->comm, addr, pgoff, len, (int) val);
+
+			mutex_lock(&kgsl_failed_mutex);
+			for (i = 0; i < FAILED_PID_CNT; i++) {
+				if (nucm[i] == private->pid) {
+					saved = 1;
+					break;
+				}
+			}
+			if (!saved) {
+				mm_keylog_write("get_unmapped_area failed\n", "GPU OOM\n", TYPE_IOMMU_ERROR);
+				nucm[nucm_index++] = private->pid;
+				if (nucm_index >= FAILED_PID_CNT) {
+					nucm_index = 0;
+				}
+			}
+			mutex_unlock(&kgsl_failed_mutex);
+		}
+#endif
 	} else {
 		 val = _get_svm_area(private, entry, addr, len, flags);
+#ifndef VENDOR_EDIT
+/* Rongchun.Zhang@PSW.MM.Display.GPU.Log, 2017/11/25  Add for keylog */
 		 if (IS_ERR_VALUE(val))
 			KGSL_DRV_ERR_RATELIMIT(device,
 				"_get_svm_area: pid %d mmap_base %lx addr %lx pgoff %lx len %ld failed error %d\n",
 				private->pid, current->mm->mmap_base, addr,
 				pgoff, len, (int) val);
+#else
+		 if (IS_ERR_VALUE(val)) {
+			KGSL_DRV_ERR_RATELIMIT(device,
+				"_get_svm_area: pid %d:%s mmap_base %lx addr %lx pgoff %lx len %ld failed error %d\n",
+				private->pid, private->comm, current->mm->mmap_base, addr,
+				pgoff, len, (int) val);
+
+			mutex_lock(&kgsl_failed_mutex);
+			for (i = 0; i < FAILED_PID_CNT; i++) {
+				if (ucm[i] == private->pid) {
+					saved = 1;
+					break;
+				}
+			}
+			if (!saved) {
+				mm_keylog_write("_get_svm_area failed\n", "GPU OOM\n", TYPE_IOMMU_ERROR);
+				ucm[ucm_index++] = private->pid;
+				if (ucm_index >= FAILED_PID_CNT) {
+					ucm_index = 0;
+				}
+			}
+			mutex_unlock(&kgsl_failed_mutex);
+		}
+#endif
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO) &&\
+		 defined(CONFIG_VIRTUAL_RESERVE_MEMORY)
+		 /* Kui.Zhang@TEC.Kernel.mm, 2019-06-06,
+		  * record the process pid and svm_oom happend jiffies
+		  */
+		 if (rlimit_svm_log && IS_ERR_VALUE(val)) {
+			 static DEFINE_RATELIMIT_STATE(svm_log_limit, 1*HZ, 1);
+
+			 if (__ratelimit(&svm_log_limit)) {
+				 svm_oom_pid = current->tgid;
+				 svm_oom_jiffies = jiffies;
+			 }
+		 }
+#endif
 	}
 
 put:
@@ -4688,6 +4940,9 @@ int kgsl_device_platform_probe(struct kgsl_device *device)
 
 	/* Initialize logging first, so that failures below actually print. */
 	kgsl_device_debugfs_init(device);
+
+	/* Disable the sparse ioctl invocation as they are not used */
+	device->flags &= ~KGSL_FLAG_SPARSE;
 
 	status = kgsl_pwrctrl_init(device);
 	if (status)

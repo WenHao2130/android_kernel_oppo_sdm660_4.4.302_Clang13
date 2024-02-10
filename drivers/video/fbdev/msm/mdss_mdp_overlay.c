@@ -54,6 +54,13 @@
 #define DFPS_DATA_MAX_FPS 0x7fffffff
 #define DFPS_DATA_MAX_CLK_RATE 250000
 
+#ifdef VENDOR_EDIT
+/* W9001377@PSW.MM.Display.Feature, 2019/9/9,
+ * add for SAU
+*/
+extern int lcd_closebl_flag;
+#endif
+
 static int mdss_mdp_overlay_free_fb_pipe(struct msm_fb_data_type *mfd);
 static int mdss_mdp_overlay_fb_parse_dt(struct msm_fb_data_type *mfd);
 static int mdss_mdp_overlay_off(struct msm_fb_data_type *mfd);
@@ -2502,6 +2509,23 @@ static int __overlay_secure_ctrl(struct msm_fb_data_type *mfd)
 	return ret;
 }
 
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Stability,2018/8/31,
+ * add for support fingerprint feature
+*/
+extern int hbm_delay;
+extern bool request_enter_aod;
+extern bool fingerprint_pressed;
+extern bool fingerprint_icon_shows;
+extern void oppo_wait_for_frame_start(struct mdss_mdp_ctl *ctl);
+extern  int request_enter_form_hbm_to_aod(struct mdss_panel_data *pdata, int hbm_level);
+extern void set_hbm_level(struct mdss_panel_data *pdata, int hbm_level, bool hbm_to_aod);
+//Add for set dither config in screen lock to solve water ripple.
+static int bpp_value = 24;
+static int last_bpp_value = 24;
+extern int mdss_mdp_panel_default_dither_config(struct msm_fb_data_type *mfd, u32 panel_bpp);
+#endif /*VENDOR_EDIT*/
+
 int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 				struct mdp_display_commit *data)
 {
@@ -2510,6 +2534,12 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 	struct mdss_mdp_ctl *ctl = mfd_to_ctl(mfd);
 	int ret = 0;
 	struct mdss_mdp_commit_cb commit_cb;
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Stability,2018/8/31,
+ * add for support fingerprint feature
+*/
+	struct mdss_panel_data *pdata = dev_get_platdata(&mfd->pdev->dev);
+#endif /*VENDOR_EDIT*/
 
 	if (!ctl || !ctl->mixer_left)
 		return -ENODEV;
@@ -2604,6 +2634,50 @@ int mdss_mdp_overlay_kickoff(struct msm_fb_data_type *mfd,
 		ATRACE_BEGIN("display_commit");
 		commit_cb.commit_cb_fnc = mdss_mdp_commit_cb;
 		commit_cb.data = mfd;
+
+#ifdef VENDOR_EDIT
+/* Gou shengjun@PSW.MM.Display.LCD.Stability,2018/8/31,
+ * add for support fingerprint feature
+*/
+		if (mfd->oppo_commit_info && (!fingerprint_icon_shows)) {
+			fingerprint_icon_shows = true;
+			ATRACE_BEGIN("frame oppo_layer_sync");
+			oppo_wait_for_frame_start(ctl);
+			ATRACE_END("frame oppo_layer_sync");
+			pdata->oppo_fingerprint_hbm_mode = 1;
+			if(!lcd_closebl_flag)set_hbm_level(pdata, 1, false);
+			usleep_range(hbm_delay, hbm_delay);
+		} else if(!mfd->oppo_commit_info && fingerprint_icon_shows) {
+			fingerprint_icon_shows = false;
+			pdata->oppo_fingerprint_hbm_mode = 0;
+			oppo_wait_for_frame_start(ctl);
+			if (request_enter_aod) {
+				request_enter_form_hbm_to_aod(pdata, 0);
+			} else {
+				set_hbm_level(pdata, 0, false);
+			}
+		}
+#endif /*VENDOR_EDIT*/
+
+		#ifdef VENDOR_EDIT
+		/*Guoqiang.jiang@PSW.MM.Display.LCD.Stability, 2018/10/15,
+		 *add for set dither config in screen lock to solve water ripple.
+		 */
+		if (fingerprint_icon_shows){
+			bpp_value = 18;
+		} else {
+			bpp_value = pdata->panel_info.bpp;
+		}
+
+		if (bpp_value != last_bpp_value) {
+			ret = mdss_mdp_panel_default_dither_config(mfd, bpp_value);
+			if (ret)
+				pr_err("Unable to configure default dither on fb%d ret %d\n",
+					mfd->index, ret);
+			last_bpp_value = bpp_value;
+		}
+		#endif /* VENDOR_EDIT */
+
 		ret = mdss_mdp_display_commit(mdp5_data->ctl, NULL,
 			&commit_cb);
 		ATRACE_END("display_commit");
@@ -3307,9 +3381,15 @@ int mdss_mdp_overlay_vsync_ctrl(struct msm_fb_data_type *mfd, int en)
 		goto end;
 	}
 
+#ifndef VENDOR_EDIT
+//Jie.Hu@PSW.MultiMedia.Display.Service.Feature.fix Bug 1292128, 2018/02/25, Add for solve color temprature abnormal
 	if (!ctl->panel_data->panel_info.cont_splash_enabled
-		&& (!mdss_mdp_ctl_is_power_on(ctl) ||
-		mdss_panel_is_power_on_ulp(ctl->power_state))) {
+			&& (!mdss_mdp_ctl_is_power_on(ctl) ||
+			mdss_panel_is_power_on_ulp(ctl->power_state))) {
+#else /* VENDOR_EDIT */
+	if (!ctl->panel_data->panel_info.cont_splash_enabled
+		&& (!mdss_mdp_ctl_is_power_on(ctl))) {
+#endif /*VENDOR_EDIT*/
 		pr_debug("fb%d vsync pending first update en=%d, ctl power state:%d\n",
 				mfd->index, en, ctl->power_state);
 		rc = -EPERM;
@@ -3542,6 +3622,38 @@ int mdss_mdp_dfps_update_params(struct msm_fb_data_type *mfd,
 	return 0;
 }
 
+#ifdef VENDOR_EDIT
+/* Gou Shengjun@PSW.MM.Display.LCD.Feature, 2018/01/03,
+ * add for dynamic fps switch
+*/
+extern bool oppo_dynamic_fps_disable_switch;
+ssize_t oppo_dynamic_fps_contrl(struct mdss_panel_data *pdata,
+	struct fb_info *fbi)
+{
+	int rc = 0;
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
+	struct dynamic_fps_data data = {0};
+
+	if (!mdp5_data->ctl || !mdss_mdp_ctl_is_power_on(mdp5_data->ctl) ||
+			mdss_panel_is_power_off(mfd->panel_power_state)) {
+		pr_debug("panel is off\n");
+		return rc;
+	}
+
+	data.fps = pdata->panel_info.max_fps;
+
+	pr_debug("%s fps: %d", __func__, pdata->panel_info.max_fps);
+
+	rc = mdss_mdp_dfps_update_params(mfd, pdata, &data);
+	if (rc) {
+		pr_err("failed to set dfps params\n");
+		return rc;
+	}
+
+	return rc;
+} /* oppo_dynamic_fps_contrl */
+#endif /*VENDOR_EDIT*/
 
 static ssize_t dynamic_fps_sysfs_wta_dfps(struct device *dev,
 	struct device_attribute *attr, const char *buf, size_t count)
@@ -3564,6 +3676,15 @@ static ssize_t dynamic_fps_sysfs_wta_dfps(struct device *dev,
 		pr_err("no panel connected for fb%d\n", mfd->index);
 		return -ENODEV;
 	}
+
+#ifdef VENDOR_EDIT
+/* Gou Shengjun@PSW.MM.Display.LCD.Feature, 2018/01/03,
+ * add for dynamic fps switch
+*/
+	if (oppo_dynamic_fps_disable_switch) {
+		return count;
+	}
+#endif /*VENDOR_EDIT*/
 
 	if (!pdata->panel_info.dynamic_fps) {
 		pr_err_once("%s: Dynamic fps not enabled for this panel\n",
@@ -3616,6 +3737,111 @@ static ssize_t dynamic_fps_sysfs_wta_dfps(struct device *dev,
 	return count;
 } /* dynamic_fps_sysfs_wta_dfps */
 
+#ifdef VENDOR_EDIT
+//Shengjun.Gou@PSW.MM.Display.LCD.Feature, 2018/01/03,
+//add for dynamic mipi dsi clk
+static ssize_t dynamic_dsitiming_sysfs_rda(struct device *dev,
+	struct device_attribute *attr, char *buf)
+{
+	ssize_t ret;
+	struct mdss_panel_data *pdata;
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
+
+	if (!mdp5_data->ctl || !mdss_mdp_ctl_is_power_on(mdp5_data->ctl))
+		return 0;
+
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("no panel connected for fb%d\n", mfd->index);
+		return -ENODEV;
+	}
+
+	mutex_lock(&mdp5_data->dynamic_dsitiming_lock);
+	ret = snprintf(buf, PAGE_SIZE, "%d\n",
+		       pdata->panel_info.cached_clk_rate);
+	pr_debug("%s: read dsi clk rate'%llu'\n", __func__,
+		pdata->panel_info.clk_rate);
+	mutex_unlock(&mdp5_data->dynamic_dsitiming_lock);
+
+	return ret;
+} /* dynamic_dsitiming_sysfs_rda */
+
+extern bool flag_lcd_off;
+
+static ssize_t dynamic_dsitiming_sysfs_wta(struct device *dev,
+	struct device_attribute *attr, const char *buf, size_t count)
+{
+	int bitclk, rc = 0;
+	struct mdss_panel_data *pdata;
+	struct fb_info *fbi = dev_get_drvdata(dev);
+	struct msm_fb_data_type *mfd = (struct msm_fb_data_type *)fbi->par;
+	struct mdss_overlay_private *mdp5_data = mfd_to_mdp5_data(mfd);
+
+	rc = kstrtoint(buf, 10, &bitclk);
+	if (rc) {
+		pr_err("%s: kstrtoint failed. rc=%d\n", __func__, rc);
+		return rc;
+	}
+
+	if (!mdp5_data->ctl || !mdss_mdp_ctl_is_power_on(mdp5_data->ctl)) {
+		pr_err(".lm. no ctl or ctl is off\n");
+		return -ENODEV;
+	}
+	pdata = dev_get_platdata(&mfd->pdev->dev);
+	if (!pdata) {
+		pr_err("no panel connected for fb%d\n", mfd->index);
+		return -ENODEV;
+	}
+
+	if (flag_lcd_off == true) {
+		pr_err("%s: fb%d is OFF status, clk change not allowed!\n", __func__, mfd->index);
+		return -ENODEV;
+	}
+
+	if (bitclk == pdata->panel_info.clk_rate) {
+		pr_err(".lm.%s: dsi bit clk  is already %d\n",
+			__func__, bitclk);
+		return count;
+	}
+	pr_debug("%s: dsi timing info: bitclk=%d\n", __func__, bitclk);
+
+	mutex_lock(&mdp5_data->dynamic_dsitiming_lock);
+
+	/* Avoid underflow*/
+	bitclk = bitclk < 1000000000 ? 1000000000 : bitclk;
+
+	/* Avoid clk too big*/
+	bitclk = bitclk > 1400000000 ? 1400000000 : bitclk;
+
+	pdata->panel_info.cached_clk_rate = pdata->panel_info.clk_rate;
+	rc = mdss_mdp_ctl_update_dsitiming(mdp5_data->ctl, bitclk);
+	if (!rc) {
+		pr_err("%s: bit clk rate configured to '%d'\n",
+				__func__, bitclk);
+	} else {
+		pr_err("Failed to configure '%d' . rc = %d\n",
+							bitclk, rc);
+		mutex_unlock(&mdp5_data->dynamic_dsitiming_lock);
+		return rc;
+	}
+	mutex_unlock(&mdp5_data->dynamic_dsitiming_lock);
+	return count;
+} /* dynamic_dsitiming_sysfs_wta */
+
+static DEVICE_ATTR(dynamic_dsitiming, S_IRUGO | S_IWUSR,
+			dynamic_dsitiming_sysfs_rda,
+			dynamic_dsitiming_sysfs_wta);
+
+static struct attribute *dynamic_dsitiming_fs_attrs[] = {
+	&dev_attr_dynamic_dsitiming.attr,
+	NULL,
+};
+static struct attribute_group dynamic_dsitiming_fs_attrs_group = {
+	.attrs = dynamic_dsitiming_fs_attrs,
+};
+#endif /*VENDOR_EDIT*/
 
 static DEVICE_ATTR(dynamic_fps, S_IRUGO | S_IWUSR, dynamic_fps_sysfs_rda_dfps,
 	dynamic_fps_sysfs_wta_dfps);
@@ -6469,6 +6695,12 @@ int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd)
 	mutex_init(&mdp5_data->ov_lock);
 	mutex_init(&mdp5_data->dfps_lock);
 
+#ifdef VENDOR_EDIT
+//Shengjun.Gou@PSW.MM.Display.LCD.Feature, 2018/01/03,
+//add for dynamic mipi dsi clk
+	mutex_init(&mdp5_data->dynamic_dsitiming_lock);
+#endif /*VENDOR_EDIT*/
+
 	mfd->mdp.private1 = mdp5_data;
 	mfd->wait_for_kickoff = true;
 
@@ -6590,6 +6822,19 @@ int mdss_mdp_overlay_init(struct msm_fb_data_type *mfd)
 			goto init_fail;
 		}
 	}
+
+#ifdef VENDOR_EDIT
+//Shengjun.Gou@PSW.MM.Display.LCD.Feature, 2018/01/03,
+//add for dynamic mipi dsi clk
+	if (mfd->panel_info->type == MIPI_CMD_PANEL) {
+		rc = sysfs_create_group(&dev->kobj,
+			&dynamic_dsitiming_fs_attrs_group);
+		if (rc) {
+			pr_err("Error dsi bit clk sysfs creation ret=%d\n", rc);
+			goto init_fail;
+		}
+	}
+#endif /*VENDOR_EDIT*/
 
 	if (mfd->panel_info->mipi.dms_mode ||
 			mfd->panel_info->type == MIPI_CMD_PANEL) {

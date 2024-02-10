@@ -365,6 +365,18 @@ static void gpio_keys_gpio_report_event(struct gpio_button_data *bdata)
 		input_event(input, type, button->code, !!state);
 	}
 	input_sync(input);
+#ifdef VENDOR_EDIT 
+//Fanhong.Kong@ProDrv.CHG,add 2016/7/26 for vol event
+       if (strcmp(button->desc, "volume_up") == 0)
+       {
+            printk("vol up  state:%d \n",  !!state);
+       }
+	   
+	   if (strcmp(button->desc, "volume_down") == 0)
+       {
+            printk("vol down  state:%d \n",  !!state);
+       }
+#endif /*VENDOR_EDIT*/	
 }
 
 static void gpio_keys_gpio_work_func(struct work_struct *work)

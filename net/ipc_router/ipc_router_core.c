@@ -236,7 +236,12 @@ static int is_sensor_port(struct msm_ipc_router_remote_port *rport)
 
 	if (rport && rport->server) {
 		svcid = rport->server->name.service;
-		if (svcid == 400 || (svcid >= 256 && svcid <= 320))
+		if ((svcid == 400 || (svcid >= 256 && svcid <= 320))
+#ifdef VENDOR_EDIT
+//ZhangQiang@Bsp, 2018/05/21, Add for non wakeup sensor wouldn't held ipc lock, except prox, motion, free fall, smd, amd
+			&& ((svcid != 277) && (svcid != 289) && (svcid != 290) && (svcid != 296) && (svcid != 260))
+#endif /*VENDOR_EDIT*/
+           )
 			return true;
 	}
 

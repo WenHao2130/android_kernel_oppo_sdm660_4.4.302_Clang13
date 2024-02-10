@@ -68,6 +68,14 @@
 #define DIAG_IOCTL_HDLC_TOGGLE	38
 #define DIAG_IOCTL_QUERY_PD_LOGGING	39
 
+//#ifdef VENDOR_EDIT
+//Zhengpeng.Tan@NW.AP.Comm.923996, 2017/01/09
+//add for modem log postback
+//#ifdef FEATURE_MODEMLOG_POSTBACK
+#define DIAG_IOCTL_SET_CLEARMASK	42
+//#endif/*FEATURE_MODEMLOG_POSTBACK*/
+//#endif/*VENDOR_EDIT*/
+
 /* PC Tools IDs */
 #define APQ8060_TOOLS_ID	4062
 #define AO8960_TOOLS_ID		4064

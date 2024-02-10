@@ -311,9 +311,25 @@ next_hook:
 		ret = NF_DROP_GETERR(verdict);
 		if (ret == 0)
 			ret = -EPERM;
+#ifndef VENDOR_EDIT
+//Junyuan.Huang@PSW.CN.WiFi.Network.1471780, 2018/06/26,
+//Modify for limit speed function
 	} else if ((verdict & NF_VERDICT_MASK) == NF_QUEUE) {
 		int err = nf_queue(skb, elem, state,
 				   verdict >> NF_VERDICT_QBITS);
+#else /* VENDOR_EDIT */
+#if defined(CONFIG_IMQ) || defined(CONFIG_IMQ_MODULE)
+	} else if ((verdict & NF_VERDICT_MASK) == NF_QUEUE ||
+		(verdict & NF_VERDICT_MASK) == NF_IMQ_QUEUE) {
+		int err = nf_queue(skb, elem, state,
+				   verdict >> NF_VERDICT_QBITS,
+				   verdict & NF_VERDICT_MASK);
+#else
+	} else if ((verdict & NF_VERDICT_MASK) == NF_QUEUE) {
+		int err = nf_queue(skb, elem, state,
+				   verdict >> NF_VERDICT_QBITS);
+#endif
+#endif /* VENDOR_EDIT */
 		if (err < 0) {
 			if (err == -ESRCH &&
 			   (verdict & NF_VERDICT_FLAG_QUEUE_BYPASS))

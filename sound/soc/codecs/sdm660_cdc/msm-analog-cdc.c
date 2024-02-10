@@ -34,6 +34,13 @@
 #include "../../msm/sdm660-common.h"
 #include "../wcd-mbhc-v2.h"
 
+#ifdef VENDOR_EDIT
+#ifdef CONFIG_OPPO_KEVENT_UPLOAD
+/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
+#include <soc/qcom/oppo_mm_audio_kevent.h>
+#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
+#endif /* VENDOR_EDIT */
+
 #define DRV_NAME "pmic_analog_codec"
 #define SDM660_CDC_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
 			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 |\
@@ -485,6 +492,13 @@ static int msm_anlg_cdc_mbhc_map_btn_code_to_num(struct snd_soc_codec *codec)
 		btn = -EINVAL;
 		break;
 	};
+
+	#ifdef VENDOR_EDIT
+	/* Jianfeng.Qiu@PSW.MM.AudioDriver.Codec, 2017/04/07,
+	 * Add for headset button log.
+	 */
+	pr_info("%s: btn is %d", __func__, btn);
+	#endif /* VENDOR_EDIT */
 
 	return btn;
 }
@@ -1615,6 +1629,65 @@ static int msm_anlg_cdc_loopback_mode_put(struct snd_kcontrol *kcontrol,
 	return 0;
 }
 
+#ifdef VENDOR_EDIT
+/*Zhaoan.Xu@PSW.MM.AudioDriver.FTM, 2016/08/24,
+ *Add for AT command to enable micbias.
+ */
+static int micbias_get(struct snd_kcontrol *kcontrol,
+        struct snd_ctl_elem_value *ucontrol)
+{
+	int val, reg1_val, reg2_val;
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+
+	reg1_val = (snd_soc_read(codec,
+			MSM89XX_PMIC_ANALOG_MICB_1_EN) &
+			0x80);
+
+	reg2_val = (snd_soc_read(codec,
+			MSM89XX_PMIC_ANALOG_MICB_2_EN) &
+			0x80);
+
+	if(reg1_val == 0x80) {
+		val = 1;
+	} else if(reg2_val == 0x80){
+		val = 2;
+	} else {
+		val = 0;
+	}
+
+	pr_err("%s val: %d\n", __func__, val);
+	return val;
+}
+
+static int micbias_put(struct snd_kcontrol *kcontrol,
+            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+
+	dev_err(codec->dev, "%s enter \n", __func__);
+	dev_err(codec->dev, "%s  micbias_put %ld : \n",__func__, ucontrol->value.integer.value[0]);
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		msm_anlg_cdc_configure_cap(codec, false, false);
+		snd_soc_update_bits(codec, MSM89XX_PMIC_ANALOG_MICB_1_EN, 0x80, 0x00);
+		msm_anlg_cdc_configure_cap(codec, false, false);
+		snd_soc_update_bits(codec, MSM89XX_PMIC_ANALOG_MICB_2_EN, 0x80, 0x00);
+		break;
+	case 1:
+		msm_anlg_cdc_configure_cap(codec, true, false);
+		snd_soc_update_bits(codec, MSM89XX_PMIC_ANALOG_MICB_1_EN, 0x80, 0x80);
+		break;
+	case 2:
+		msm_anlg_cdc_configure_cap(codec, false, true);
+		snd_soc_update_bits(codec, MSM89XX_PMIC_ANALOG_MICB_2_EN, 0x80, 0x80);
+		break;
+	default:
+		dev_err(codec->dev, "%s invalid val \n", __func__);
+	}
+
+	return 0;
+}
+#endif /* VENDOR_EDIT */
 static int msm_anlg_cdc_pa_gain_get(struct snd_kcontrol *kcontrol,
 				    struct snd_ctl_elem_value *ucontrol)
 {
@@ -1910,6 +1983,16 @@ static int msm_anlg_cdc_ext_spk_boost_set(struct snd_kcontrol *kcontrol,
 }
 
 
+#ifdef VENDOR_EDIT
+/*Zhaoan.Xu@PSW.MM.AudioDriver.FTM, 2016/08/24,
+ *Add for AT command to enable micbias.
+ */
+static char const *msm_anlg_cdc_micbias_ctrl_text[] = {
+		"DISABLE", "MICBIAS1", "MICBIAS2"};
+static const struct soc_enum msm_anlg_cdc_micbias_ctl_enum[] = {
+		SOC_ENUM_SINGLE_EXT(3, msm_anlg_cdc_micbias_ctrl_text),
+};
+#endif /* VENDOR_EDIT */
 static const char * const msm_anlg_cdc_loopback_mode_ctrl_text[] = {
 		"DISABLE", "ENABLE"};
 static const struct soc_enum msm_anlg_cdc_loopback_mode_ctl_enum[] = {
@@ -1958,8 +2041,101 @@ static const char * const cf_text[] = {
 	"MIN_3DB_4Hz", "MIN_3DB_75Hz", "MIN_3DB_150Hz"
 };
 
+#ifdef VENDOR_EDIT
+/*Jianfeng.Qiu@PSW.MM.AudioDriver.Codec, 2017/05/12,
+ *Add for set mode for pm660l_bob regulator.
+ */
+static char const *pm660l_bob_ctrl_text[] = {
+	"MODE_NORMAL", "MODE_FAST", "MODE_IDLE", "MODE_STANDBY"
+};
+static const struct soc_enum pm660l_bob_ctl_enum[] = {
+	SOC_ENUM_SINGLE_EXT(ARRAY_SIZE(pm660l_bob_ctrl_text), pm660l_bob_ctrl_text),
+};
 
+extern int pm660l_bob_regulator_set_mode(unsigned int mode);
+
+static int regulator_mode_switch_get(struct snd_kcontrol *kcontrol,
+            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct sdm660_cdc_priv *sdm660_cdc = snd_soc_codec_get_drvdata(codec);
+
+	if (!sdm660_cdc) {
+		pr_warn("%s: No sdm660_cdc\n", __func__);
+		return 0;
+	}
+
+	if (sdm660_cdc->bob_mode == REGULATOR_MODE_NORMAL) {
+		ucontrol->value.integer.value[0] = 0;
+	} else if (sdm660_cdc->bob_mode == REGULATOR_MODE_FAST) {
+		ucontrol->value.integer.value[0] = 1;
+	} else if (sdm660_cdc->bob_mode == REGULATOR_MODE_IDLE) {
+		ucontrol->value.integer.value[0] = 2;
+	} else if (sdm660_cdc->bob_mode == REGULATOR_MODE_STANDBY) {
+		ucontrol->value.integer.value[0] = 3;
+	} else  {
+		pr_err("%s: ERROR: Default bob_mode = 0x%x\n",
+			__func__, sdm660_cdc->bob_mode);
+	}
+
+	pr_info("%s: bob_mode = 0x%x\n", __func__, sdm660_cdc->bob_mode);
+	return 0;
+}
+
+static int regulator_mode_switch_set(struct snd_kcontrol *kcontrol,
+            struct snd_ctl_elem_value *ucontrol)
+{
+	struct snd_soc_codec *codec = snd_soc_kcontrol_codec(kcontrol);
+	struct sdm660_cdc_priv *sdm660_cdc = snd_soc_codec_get_drvdata(codec);
+
+	pr_info("%s: ucontrol->value.integer.value[0] = %ld\n",
+		__func__, ucontrol->value.integer.value[0]);
+
+	if (!sdm660_cdc) {
+		pr_warn("%s: No sdm660_cdc\n", __func__);
+		return 0;
+	}
+
+	switch (ucontrol->value.integer.value[0]) {
+	case 0:
+		sdm660_cdc->bob_mode = REGULATOR_MODE_NORMAL;
+		break;
+	case 1:
+		sdm660_cdc->bob_mode = REGULATOR_MODE_FAST;
+		break;
+	case 2:
+		sdm660_cdc->bob_mode = REGULATOR_MODE_IDLE;
+		break;
+	case 3:
+		sdm660_cdc->bob_mode = REGULATOR_MODE_STANDBY;
+		break;
+	default:
+		sdm660_cdc->bob_mode = REGULATOR_MODE_NORMAL;
+		break;
+	}
+
+	pr_info("%s: set bob_mode = 0x%x\n", __func__, sdm660_cdc->bob_mode);
+	pm660l_bob_regulator_set_mode(sdm660_cdc->bob_mode);
+
+	return 0;
+}
+#endif /* VENDOR_EDIT */
 static const struct snd_kcontrol_new msm_anlg_cdc_snd_controls[] = {
+	#ifdef VENDOR_EDIT
+	/*Zhaoan.Xu@PSW.MM.AudioDriver.FTM, 2016/08/24,
+	 *Add for AT command to enable micbias.
+	 */
+	SOC_ENUM_EXT("Enable Micbias", msm_anlg_cdc_micbias_ctl_enum[0],
+		micbias_get, micbias_put),
+	#endif /* VENDOR_EDIT */
+
+	#ifdef VENDOR_EDIT
+	/*Jianfeng.Qiu@PSW.MM.AudioDriver.Codec, 2017/05/12,
+	 *Add for set mode for pm660l_bob regulator.
+	 */
+	SOC_ENUM_EXT("Regulator Mode Switch", pm660l_bob_ctl_enum[0],
+		regulator_mode_switch_get, regulator_mode_switch_set),
+	#endif /* VENDOR_EDIT */
 
 	SOC_ENUM_EXT("RX HPH Mode", msm_anlg_cdc_hph_mode_ctl_enum[0],
 		msm_anlg_cdc_hph_mode_get, msm_anlg_cdc_hph_mode_set),
@@ -3869,6 +4045,13 @@ static int sdm660_cdc_notifier_service_cb(struct notifier_block *nb,
 	unsigned long timeout;
 	static bool initial_boot = true;
 
+	#ifdef VENDOR_EDIT
+	#ifdef CONFIG_OPPO_KEVENT_UPLOAD
+	/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
+	unsigned char payload[64] = "";
+	#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
+	#endif /* VENDOR_EDIT */
+
 	codec = sdm660_cdc_priv->codec;
 	dev_dbg(codec->dev, "%s: Service opcode 0x%lx\n", __func__, opcode);
 
@@ -3911,6 +4094,14 @@ static int sdm660_cdc_notifier_service_cb(struct notifier_block *nb,
 powerup:
 		if (adsp_ready)
 			msm_anlg_cdc_device_up(codec);
+		#ifdef VENDOR_EDIT
+		#ifdef CONFIG_OPPO_KEVENT_UPLOAD
+		/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
+		scnprintf(payload, sizeof(payload), "EventID@@%d$$adsp_ssr",
+			OPPO_MM_AUDIO_EVENT_ID_ADSP_RESET);
+		upload_mm_audio_kevent_data(payload);
+		#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
+		#endif /* VENDOR_EDIT */
 		break;
 	default:
 		break;
@@ -4160,6 +4351,12 @@ static int msm_anlg_cdc_soc_probe(struct snd_soc_codec *codec)
 	sdm660_cdc->boost_option = BOOST_SWITCH;
 	sdm660_cdc->hph_mode = NORMAL_MODE;
 
+	#ifdef VENDOR_EDIT
+	/*Jianfeng.Qiu@PSW.MM.AudioDriver.Codec, 2017/05/12,
+	 *Add for set mode for pm660l_bob regulator.
+	 */
+	sdm660_cdc->bob_mode = REGULATOR_MODE_NORMAL;
+	#endif /* VENDOR_EDIT */
 	msm_anlg_cdc_dt_parse_boost_info(codec);
 	msm_anlg_cdc_set_boost_v(codec);
 
@@ -4601,6 +4798,10 @@ static int msm_anlg_cdc_probe(struct platform_device *pdev)
 				     GFP_KERNEL);
 	if (sdm660_cdc == NULL) {
 		ret = -ENOMEM;
+		#ifdef VENDOR_EDIT
+		/* Jianfeng.Qiu@PSW.MM.AudioDriver.Machine,2017/09/21, Add for log*/
+		pr_err("%s: *** -ENOMEM\n", __func__);
+		#endif /* VENDOR_EDIT */
 		goto rtn;
 	}
 

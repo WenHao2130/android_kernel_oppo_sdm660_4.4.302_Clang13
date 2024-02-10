@@ -24,6 +24,59 @@
 static struct msm_camera_i2c_fn_t msm_sensor_cci_func_tbl;
 static struct msm_camera_i2c_fn_t msm_sensor_secure_func_tbl;
 
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+#include <soc/oppo/device_info.h>
+#include <soc/oppo/oppo_project.h>
+
+struct int_string_pair cam_module_info[] = {
+	{0x01, "Sunny"},
+	{0x02, "Truly"},
+	{0x03, "SEMCO"},
+	{0x04, "Lite-ON"},
+	{0x05, "Q-Tech"},
+	{0x06, "OFilm"},
+};
+
+struct int_string_pair cam_sensor_info[] = {
+	{0x17, "imx258"},
+	{0x18, "imx298"},
+	{0x1a, "imx398"},
+	{0x36, "s5k3l8"},
+	{0x1b, "imx371"},
+	{0x1c, "imx350"},
+	{0x1b, "imx376"},
+	{0x1e, "imx376k"},
+	{0x51, "imx476"},
+	{0x53, "imx576"},
+	{0x52, "imx519"},
+	{0x37, "s5k3p3"},
+	{0x38, "s5k3p3sp"},
+	{0x3d, "s5k2p7sq"},
+	{0x3a, "s5k3p8"},
+	{0x3b, "s5k3p8sp"},
+	{0x3c, "s5k2t7sp"},
+	{0x3e, "s5k2t7sx"},
+	{0x3f, "s5k2t7sm"},
+	{0x28, "ov13855_f13v08b"},
+	{0x29, "ov20880"},
+	{0x63, "s5k5e9"},
+	{0x00, "gc2375h"},
+};
+
+int size_of_module_list = -1;
+int size_of_sensor_list = -1;
+
+uint8_t deviceInfo_register_value = 0x00; /*bit 1:front, bit 0: rear*/
+
+extern uint16_t rear_sensor;
+extern uint16_t rear_module;
+extern uint16_t front_sensor;
+extern uint16_t front_module;
+/*oppo hufeng 20170224 add for back aux camera module vendor info*/
+extern uint16_t rear2_module;
+extern uint16_t rear2_sensor;
+#endif
 static void msm_sensor_adjust_mclk(struct msm_camera_power_ctrl_t *ctrl)
 {
 	int idx;
@@ -236,13 +289,126 @@ static uint16_t msm_sensor_id_by_mask(struct msm_sensor_ctrl_t *s_ctrl,
 	return sensor_id;
 }
 
+#ifdef VENDOR_EDIT
+/*Add by Zhengrong.Zhang@Camera 20160630 for merge basic modification*/
+static int at_msm_sensor_power_down(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	if (msm_sensor_power_down(s_ctrl)< 0) {
+		pr_err("%s:%d error \n", __func__,__LINE__);
+		return -1;
+	}
+	s_ctrl->sensor_state = MSM_SENSOR_POWER_DOWN;
+	return 0;
+}
+static int at_msm_sensor_power_up(struct msm_sensor_ctrl_t *s_ctrl)
+{
+
+	printk("%s sensor is %s\n", __func__,s_ctrl->sensordata->sensor_name);
+
+	if (msm_sensor_power_up(s_ctrl)< 0) {
+		pr_err("%s:%d error \n", __func__,__LINE__);
+		return -1;
+	}
+	s_ctrl->sensor_state = MSM_SENSOR_POWER_UP;
+	return 0;
+}
+
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+static void register_device_info(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	int i = 0, position = 0xff;
+	uint16_t module_info = 0;
+	char *p_sensor_name = NULL;
+	char position_string[20];
+
+	position = s_ctrl->sensordata->sensor_info->position;
+
+    if (deviceInfo_register_value
+    	& (0x01 << position)) {
+        pr_err("%s:%d: device info of position %d already register\n",
+        	__func__, __LINE__, s_ctrl->sensordata->sensor_info->position);
+        return;
+    }
+
+    if (position == 0) {
+    	module_info = rear_module;
+    	strcpy(position_string, "r_camera");
+    } else if (position == 1) {
+    	module_info = front_module;
+    	strcpy(position_string, "f_camera");
+    } else if (position == 2) {
+    	module_info = rear2_module;
+    	strcpy(position_string, "r2_camera");
+    }
+
+	for (i = 0; i < size_of_module_list; i++) {
+		if (cam_module_info[i].value == module_info)
+			break;
+	}
+	if (i < size_of_module_list) {
+		/*register_device_proc will not copy the string, so we need keep it always valid*/
+		p_sensor_name = kzalloc(20, GFP_KERNEL);
+		if (!p_sensor_name) {
+			pr_err("%s:%d kzalloc failed\n", __func__, __LINE__);
+			return;
+		}
+		strcpy(p_sensor_name, s_ctrl->sensordata->sensor_name);
+		/*keep this log before mp*/
+		CDBG("%s:%d: will register device %s %s\n",
+			__func__, __LINE__, cam_module_info[i].string, p_sensor_name);
+		register_device_proc(position_string, p_sensor_name, cam_module_info[i].string);
+
+    	deviceInfo_register_value |= (0x01 << position);
+	}
+
+    return;
+}
+
+/* Add by Liubin at 20170705 for [match the sensor and pcb version] */
+static int msm_sensor_match_pcb_version(struct msm_sensor_ctrl_t *s_ctrl)
+{
+	unsigned int project = get_project();
+	unsigned char pcb_version = get_PCB_Version();
+
+	/* forbid the 16051 project evt/dvt/pvt pcb version to use 2p7+2t7 semco module */
+	if (project == OPPO_16051 &&
+		(pcb_version == HW_VERSION__10 || pcb_version == HW_VERSION__11 || pcb_version == HW_VERSION__12) &&
+		((strcmp("s5k2p7sq", s_ctrl->sensordata->sensor_name) == 0 && rear_module == 0x03) ||
+		 (strcmp("s5k2t7sx", s_ctrl->sensordata->sensor_name) == 0 && rear2_module == 0x03))) {
+		pr_err("%s sensor %s does not match pcb_version %d\n",
+			__func__, s_ctrl->sensordata->sensor_name, pcb_version);
+		return -ENODEV;
+	}
+
+	return 0;
+}
+#endif
+#ifdef VENDOR_EDIT
+/*add by hongbo.dai@Camera 20180123, for support ES1 and ES2 sensor*/
+#define IMX476_ES1 0x550
+#define IMX476_ES2 0x476
+#define IMX476_VER_ADDR 0x0018
+#endif
 int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 {
 	int rc = 0;
+	#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@Camera,20180209 for get chipid and chip version*/
 	uint16_t chipid = 0;
+	uint16_t chip_version = 0;
+	#endif
 	struct msm_camera_i2c_client *sensor_i2c_client;
 	struct msm_camera_slave_info *slave_info;
 	const char *sensor_name;
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+	int i = 0;
+	/*Added by Hongbo.Dai@Camera 20171115 for [module vendor info]*/
+	unsigned int project = get_project();
+	int position = 0xff;
+	bool is_eeprom_empty = false;
+	uint16_t empty_eeprom_data = 0xffff;
+#endif
 
 	if (!s_ctrl) {
 		pr_err("%s:%d failed: %pK\n",
@@ -267,14 +433,106 @@ int msm_sensor_match_id(struct msm_sensor_ctrl_t *s_ctrl)
 		pr_err("%s: %s: read id failed\n", __func__, sensor_name);
 		return rc;
 	}
-
 	pr_debug("%s: read id: 0x%x expected id 0x%x:\n",
 			__func__, chipid, slave_info->sensor_id);
+	#ifndef VENDOR_EDIT
 	if (msm_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
 		pr_err("%s chip id %x does not match %x\n",
 				__func__, chipid, slave_info->sensor_id);
 		return -ENODEV;
 	}
+	#else
+	/*modify by hongbo.dai@camera, 20171229 for support es1 and es2 imx476*/
+	if (strcmp(sensor_name, "imx476") != 0
+		&& msm_sensor_id_by_mask(s_ctrl, chipid) != slave_info->sensor_id) {
+		pr_err("%s chip id %x does not match %x\n",
+			__func__, chipid, slave_info->sensor_id);
+		return -ENODEV;
+	}
+	/*add by hongbo.dai@Camera 20180123, for support ES1 and ES2 sensor*/
+	if (strcmp(sensor_name, "imx476") == 0) {
+		if ((chipid != IMX476_ES1) && (chipid != IMX476_ES2)) {
+			pr_err("%s chip id %x does not match %x\n",
+				__func__, chipid, slave_info->sensor_id);
+			return -ENODEV;
+		}
+		rc = sensor_i2c_client->i2c_func_tbl->i2c_read(
+			sensor_i2c_client, IMX476_VER_ADDR,
+			&chip_version, MSM_CAMERA_I2C_BYTE_DATA);
+		if (rc < 0) {
+			pr_err("%s: %s: get version failed\n", __func__, sensor_name);
+			return rc;
+		}
+		s_ctrl->chip_version = chip_version;
+	}
+	s_ctrl->chip_id = chipid;
+	#endif
+#ifdef VENDOR_EDIT
+/*Add by jindian.guan 20160806 for 3p8sp*/
+	pr_err("%s:rear sensor:0x%02x, front sensor:0x%02x, rear2 sensor:0x%02x\n",
+		__func__, rear_sensor, front_sensor, rear2_sensor);
+
+/* Add by Liubin at 20170705 for [match the sensor and pcb version] */
+	if (msm_sensor_match_pcb_version(s_ctrl) < 0) {
+		pr_err("%s this pcb version can not use the sensor module\n",__func__);
+		return -ENODEV;
+	}
+
+/*Added by Jinshui.Liu@Camera 20160821 for [module vendor info]*/
+	/*need match sensorID in sensor and eeprom*/
+	if (size_of_module_list < 0) {
+		size_of_module_list = ARRAY_SIZE(cam_module_info);
+	}
+	if (size_of_sensor_list < 0) {
+		size_of_sensor_list = ARRAY_SIZE(cam_sensor_info);
+	}
+	CDBG("%s size_of_module_list %d,size_of_sensor_list %d\n",
+		__func__, size_of_module_list, size_of_sensor_list);
+	for (i = 0; i < size_of_sensor_list; i++) {
+		if (strcmp(cam_sensor_info[i].string, s_ctrl->sensordata->sensor_name) == 0) {
+			/*oppo hufeng 20170225 remove position id check for dual cam*/
+			if ((/*(s_ctrl->sensordata->sensor_info->position == 0)
+				&&*/ (cam_sensor_info[i].value == rear_sensor))
+				|| (rear_sensor == 0))
+				break;
+			else if ((/*(s_ctrl->sensordata->sensor_info->position == 1)
+				&&*/ (cam_sensor_info[i].value == front_sensor))
+				|| (front_sensor == 0))
+				break;
+			else if (((cam_sensor_info[i].value == rear2_sensor))
+				|| (rear2_sensor == 0))
+				break;
+		}
+	}
+	/*add by hongbo.dai@Camera.for suppor 17081 T0 sensor*/
+	position = s_ctrl->sensordata->sensor_info->position;
+	if ((position == 0 && rear_sensor == empty_eeprom_data)
+		|| (position == 1 && front_sensor == empty_eeprom_data)
+		|| (position >= 2 && rear2_sensor == empty_eeprom_data)) {
+		is_eeprom_empty = true;
+		pr_err("func:%s  sensor_name:%s  is empty\n",__func__, sensor_name);
+	}
+	/*add by hongbo.dai@Camera.for suppor 17081 T0 sensor*/
+	if ((project != 17081 && project != 18005 && project != 18323) || (project == 17081 && !is_eeprom_empty)) {
+		/*modify hongbo.dai@camera 20180309, s5k5e9 no need to match eeprom sensor id*/
+		if ((i >= size_of_sensor_list)
+			&& (strcmp(s_ctrl->sensordata->sensor_name, "s5k5e9") != 0)) {
+			pr_err("%s %s match sensorID of eeprom failed\n",
+				__func__, s_ctrl->sensordata->sensor_name);
+			return -ENODEV;
+		} else {
+			CDBG("%s %s match sensorID of eeprom at i %d\n",
+				__func__, s_ctrl->sensordata->sensor_name, i);
+		}
+	} else {
+		pr_err("17081 T0 phase no need to check eeprom");
+	}
+	/*add by hongbo.dai@Camera,20180115 for get sensor real chip id*/
+	s_ctrl->chip_id = chipid;
+	CDBG("%s chip id: 0x%0x:\n", __func__, s_ctrl->chip_id);
+	CDBG("%s:%d: %s mached success\n", __func__, __LINE__, s_ctrl->sensordata->sensor_name);
+	register_device_info(s_ctrl);
+#endif
 	return rc;
 }
 
@@ -334,6 +592,29 @@ static long msm_sensor_subdev_ioctl(struct v4l2_subdev *sd,
 		pr_err("%s s_ctrl NULL\n", __func__);
 		return -EBADF;
 	}
+#ifdef VENDOR_EDIT
+/*Add by Zhengrong.Zhang@Camera 20160630 for merge basic modification*/
+	if (cmd == 0 && arg == NULL) {
+		rc = at_msm_sensor_power_down(s_ctrl);
+		return rc;
+	}
+#ifndef VENDOR_EDIT
+	else if (cmd ==1 && arg == NULL) {
+		rc = at_msm_sensor_power_up(s_ctrl);
+#else  /*add by hongbo.dai@camera 20170325 for AT test*/
+	else if (cmd ==1) {
+		rc = at_msm_sensor_power_up(s_ctrl);
+		if(rc<0){
+			pr_err("%s power up err\n", __func__);
+			return rc;
+		}
+		/*add by hongbo.dai@camera 20170325,return sensor name for AT test*/
+		if(argp!=NULL)
+			memcpy((char *)argp,s_ctrl->sensordata->sensor_name,16);
+#endif
+		return rc;
+	}
+#endif
 	switch (cmd) {
 	case VIDIOC_MSM_SENSOR_CFG:
 #ifdef CONFIG_COMPAT

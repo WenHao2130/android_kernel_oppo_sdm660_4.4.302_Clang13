@@ -295,6 +295,10 @@ int trace_array_get(struct trace_array *this_tr)
 
 	return ret;
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(trace_array_get);
+#endif
 
 static void __trace_array_put(struct trace_array *this_tr)
 {
@@ -308,6 +312,10 @@ void trace_array_put(struct trace_array *this_tr)
 	__trace_array_put(this_tr);
 	mutex_unlock(&trace_types_lock);
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(trace_array_put);
+#endif
 
 int filter_check_discard(struct trace_event_file *file, void *rec,
 			 struct ring_buffer *buffer,
@@ -504,7 +512,7 @@ static inline void ftrace_trace_stack(struct trace_array *tr,
 
 #endif
 
-static void tracer_tracing_on(struct trace_array *tr)
+void tracer_tracing_on(struct trace_array *tr)
 {
 	if (tr->trace_buffer.buffer)
 		ring_buffer_record_on(tr->trace_buffer.buffer);
@@ -520,6 +528,10 @@ static void tracer_tracing_on(struct trace_array *tr)
 	/* Make the flag seen by readers */
 	smp_wmb();
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(tracer_tracing_on);
+#endif
 
 /**
  * tracing_on - enable tracing buffers
@@ -774,7 +786,7 @@ void tracing_snapshot_alloc(void)
 EXPORT_SYMBOL_GPL(tracing_snapshot_alloc);
 #endif /* CONFIG_TRACER_SNAPSHOT */
 
-static void tracer_tracing_off(struct trace_array *tr)
+void tracer_tracing_off(struct trace_array *tr)
 {
 	if (tr->trace_buffer.buffer)
 		ring_buffer_record_off(tr->trace_buffer.buffer);
@@ -790,6 +802,10 @@ static void tracer_tracing_off(struct trace_array *tr)
 	/* Make the flag seen by readers */
 	smp_wmb();
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(tracer_tracing_off);
+#endif
 
 /**
  * tracing_off - turn off tracing buffers
@@ -3664,7 +3680,7 @@ int set_tracer_flag(struct trace_array *tr, unsigned int mask, int enabled)
 	return 0;
 }
 
-static int trace_set_options(struct trace_array *tr, char *option)
+int trace_set_options(struct trace_array *tr, char *option)
 {
 	char *cmp;
 	int neg = 0;
@@ -3703,6 +3719,25 @@ static int trace_set_options(struct trace_array *tr, char *option)
 
 	return ret;
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(trace_set_options);
+
+int get_system_default_ftrace(struct trace_array ** tr_ret)
+{
+	struct trace_array *tr = &global_trace;
+
+	if (tracing_disabled)
+		return -ENODEV;
+
+	if (trace_array_get(tr) < 0)
+		return -ENODEV;
+
+	*tr_ret = tr;
+	return 0;
+}
+EXPORT_SYMBOL(get_system_default_ftrace);
+#endif
 
 static void __init apply_trace_boot_options(void)
 {
@@ -4447,7 +4482,7 @@ static int __tracing_resize_ring_buffer(struct trace_array *tr,
 	return ret;
 }
 
-static ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
+ssize_t tracing_resize_ring_buffer(struct trace_array *tr,
 					  unsigned long size, int cpu_id)
 {
 	int ret = size;
@@ -4471,6 +4506,10 @@ out:
 
 	return ret;
 }
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+EXPORT_SYMBOL(tracing_resize_ring_buffer);
+#endif
 
 
 /**
@@ -5379,6 +5418,44 @@ static int tracing_clock_show(struct seq_file *m, void *v)
 
 	return 0;
 }
+
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+int tracing_clock_update(struct trace_array *tr, const char *buf)
+{
+	const char *clockstr = buf;
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(trace_clocks); i++) {
+		if (strcmp(trace_clocks[i].name, clockstr) == 0)
+			break;
+	}
+	if (i == ARRAY_SIZE(trace_clocks))
+		return -EINVAL;
+
+	mutex_lock(&trace_types_lock);
+
+	tr->clock_id = i;
+
+	ring_buffer_set_clock(tr->trace_buffer.buffer, trace_clocks[i].func);
+
+	/*
+	 * New clock may not be consistent with the previous clock.
+	 * Reset the buffer so that it doesn't have incomparable timestamps.
+	 */
+	tracing_reset_online_cpus(&tr->trace_buffer);
+
+#ifdef CONFIG_TRACER_MAX_TRACE
+	if (tr->flags & TRACE_ARRAY_FL_GLOBAL && tr->max_buffer.buffer)
+		ring_buffer_set_clock(tr->max_buffer.buffer, trace_clocks[i].func);
+	tracing_reset_online_cpus(&tr->max_buffer);
+#endif
+
+	mutex_unlock(&trace_types_lock);
+	return 0;
+}
+EXPORT_SYMBOL(tracing_clock_update);
+#endif
 
 static int tracing_set_clock(struct trace_array *tr, const char *clockstr)
 {

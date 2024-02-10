@@ -617,6 +617,19 @@ void tracing_start_cmdline_record(void);
 void tracing_stop_cmdline_record(void);
 int register_tracer(struct tracer *type);
 int is_tracing_stopped(void);
+#ifdef VENDOR_EDIT
+//fangpan@Swdp.shanghai, 2016/06/30, export the ftrace interface
+/* add more interface for kernel ftrace collect function*/
+extern int trace_array_get(struct trace_array *this_tr);
+extern void trace_array_put(struct trace_array *this_tr);
+extern void tracer_tracing_on(struct trace_array *tr);
+extern void tracer_tracing_off(struct trace_array *tr);
+extern int trace_set_options(struct trace_array *tr, char *option);
+extern int get_system_default_ftrace(struct trace_array ** tr_ret);
+extern ssize_t tracing_resize_ring_buffer(struct trace_array *tr, unsigned long size, int cpu_id);
+extern int tracing_clock_update(struct trace_array *tr, const char *buf);
+extern int ftrace_set_clr_event(struct trace_array *tr, char *buf, int set);
+#endif
 
 loff_t tracing_lseek(struct file *file, loff_t offset, int whence);
 

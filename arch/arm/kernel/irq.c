@@ -182,8 +182,14 @@ void migrate_irqs(void)
 		raw_spin_unlock(&desc->lock);
 
 		if (affinity_broken)
+#ifndef VENDOR_EDIT
+/* Yichun.Chen  PSW.BSP.CHG  2018-10-06  reduce kernel log */
 			pr_warn_ratelimited("IRQ%u no longer affine to CPU%u\n",
 				i, smp_processor_id());
+#else
+			pr_devel_ratelimited("IRQ%u no longer affine to CPU%u\n",
+				i, smp_processor_id());
+#endif
 	}
 
 	local_irq_restore(flags);

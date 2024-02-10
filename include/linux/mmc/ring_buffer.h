@@ -20,7 +20,13 @@
 
 #include "core.h"
 
+#ifndef VENDOR_EDIT
+//rendong.shi@BSP.Storage.emmc,2017/4/29,merge debug patch1918004 for emmc issue
 #define MMC_TRACE_RBUF_SZ_ORDER	2	/* 2^2 pages */
+#else
+#define MMC_TRACE_RBUF_SZ_ORDER	3	/* 2^2 pages */
+#endif
+
 #define MMC_TRACE_RBUF_SZ	(PAGE_SIZE * (1 << MMC_TRACE_RBUF_SZ_ORDER))
 #define MMC_TRACE_EVENT_SZ	256
 #define MMC_TRACE_RBUF_NUM_EVENTS	(MMC_TRACE_RBUF_SZ / MMC_TRACE_EVENT_SZ)

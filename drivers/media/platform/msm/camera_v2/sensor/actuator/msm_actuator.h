@@ -108,6 +108,11 @@ struct msm_actuator_ctrl_t {
 	struct msm_camera_gpio_conf *gconf;
 	struct msm_pinctrl_info pinctrl_info;
 	uint8_t cam_pinctrl_status;
+	#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera 20170514*/
+	bool firmware_load;
+	bool is_empty_eeprom;
+	#endif
 };
 
 #endif

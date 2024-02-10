@@ -879,6 +879,12 @@ struct rq {
 	struct cpuidle_state *idle_state;
 	int idle_state_idx;
 #endif
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    struct list_head ux_thread_list;
+    int active_ux_balance;
+    struct cpu_stop_work ux_balance_work;
+#endif /* VENDOR_EDIT */
 };
 
 static inline int cpu_of(struct rq *rq)

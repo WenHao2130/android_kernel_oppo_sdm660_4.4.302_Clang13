@@ -16,6 +16,10 @@
 #include "msm_sd.h"
 #include "msm_actuator.h"
 #include "msm_cci.h"
+#ifdef VENDOR_EDIT
+#include "ak7374_lib.h"
+#include <soc/oppo/oppo_project.h>
+#endif
 
 DEFINE_MSM_MUTEX(msm_actuator_mutex);
 
@@ -26,9 +30,20 @@ DEFINE_MSM_MUTEX(msm_actuator_mutex);
 #define CDBG(fmt, args...) pr_debug(fmt, ##args)
 #endif
 
+#ifndef VENDOR_EDIT
+/*Jindian.Guan@Camera.Drv, 2018/2/3, modify for [tick sound of parking lens]*/
 #define PARK_LENS_LONG_STEP 7
 #define PARK_LENS_MID_STEP 5
 #define PARK_LENS_SMALL_STEP 3
+#else
+#define PARK_LENS_LONG_STEP 4
+#define PARK_LENS_MID_STEP 2
+#define PARK_LENS_SMALL_STEP 1
+#define PARK_LENS_LONG_POS 400
+#define PARK_LENS_MID_POS 140
+#define PARK_LENS_MIN_POS 20
+#endif
+
 #define MAX_QVALUE 4096
 
 static struct v4l2_file_operations msm_actuator_v4l2_subdev_fops;
@@ -40,6 +55,11 @@ static struct msm_actuator msm_piezo_actuator_table;
 static struct msm_actuator msm_hvcm_actuator_table;
 static struct msm_actuator msm_bivcm_actuator_table;
 
+#ifdef VENDOR_EDIT
+/*add by hongbo.dai@camera 20171115,for support empty eeprom actuator*/
+unsigned int project = 17011; //default 17011
+static char empty_eeprom_data[] = {"65535"};
+#endif
 static struct i2c_driver msm_actuator_i2c_driver;
 static struct msm_actuator *actuators[] = {
 	&msm_vcm_actuator_table,
@@ -47,6 +67,441 @@ static struct msm_actuator *actuators[] = {
 	&msm_hvcm_actuator_table,
 	&msm_bivcm_actuator_table,
 };
+
+#ifdef VENDOR_EDIT
+/* add by hongbo.dai@camera 2017.5.14 to update PID of eeprom in driver IC */
+static int32_t msm_actuator_write_firmware_semco(struct msm_actuator_ctrl_t *a_ctrl)
+{
+	int i;
+	int32_t rc = 0;
+	int32_t retry_times = 0;
+	int32_t download_retry_times = 0;
+	uint16_t reg_data = 0;
+	bool need_to_update = false;
+	static bool is_imx398_updated;
+	static bool is_imx350_updated;
+	unsigned short actuator_addr;
+	unsigned short eeprom_addr;
+	#define UPDATE_REG_SIZE 16
+
+	struct msm_camera_i2c_reg_array update_reg_arr[UPDATE_REG_SIZE] = {
+		{0x0E, 0x14, 0x0},
+		{0x0F, 0x50, 0x0},
+		{0x3C, 0x17, 0x0},
+		{0x3D, 0x05, 0x0},
+		{0x3E, 0x22, 0x0},
+		{0x3F, 0x02, 0x0},
+		{0x41, 0xF3, 0x0},
+		{0x42, 0x2F, 0x0},
+		{0x44, 0x37, 0x0},
+		{0x49, 0x58, 0x0},
+		{0x4A, 0x25, 0x0},
+		{0x4B, 0x7B, 0x0},
+		{0x4C, 0xF5, 0x0},
+		{0x4D, 0x0C, 0x0},
+		{0x53, 0x08, 0x0},
+		{0x54, 0x10, 0x0},
+	};
+
+	struct msm_camera_i2c_reg_array enable_reg_arr[3] = {
+		{0x99, 0xAF, 0x0},
+		{0x9A, 0x85, 0x0},
+		{0x80, 0x01, 0x0},
+	};
+
+	struct msm_camera_i2c_reg_array disable_reg_arr[3] = {
+		{0x99, 0x00, 0x0},
+		{0x9A, 0x00, 0x0},
+		{0x80, 0x00, 0x0},
+	};
+
+	is_imx398_updated = false;
+	is_imx350_updated = false;
+	CDBG("%s:entry \n", __func__);
+	if ((!is_imx398_updated && (0xE4 >> 1 == a_ctrl->i2c_client.cci_client->sid))
+		|| (!is_imx350_updated && (0xE8 >> 1 == a_ctrl->i2c_client.cci_client->sid))) {
+		actuator_addr = a_ctrl->i2c_client.cci_client->sid;
+
+		if (0xE4 >> 1 == actuator_addr)
+			is_imx398_updated = true;
+		else if (0xE8 >> 1 == actuator_addr)
+			is_imx350_updated = true;
+
+		if (0xE4 >> 1 == actuator_addr)/* 0xE4 means imx398 */
+			eeprom_addr = 0xE6 >> 1;/* E6>>1 is the slave addr of eeprom in imx398's driver IC */
+		else if (0xE8 >> 1 == actuator_addr)/* 0xE8 means imx350 */
+			eeprom_addr = 0xEA >> 1;/* EA>>1 is the slave addr of eeprom in imx398's driver IC */
+		CDBG("%s:%d actuator_addr = 0x%x, eeprom_addr = 0x%x\n", __func__, __LINE__,
+			actuator_addr<<1, eeprom_addr);
+
+		a_ctrl->i2c_client.cci_client->sid = actuator_addr;
+		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+			&a_ctrl->i2c_client,
+			0xF0,
+			&reg_data,
+			1);
+		if (rc < 0) {
+			pr_err("%s:%d i2c read error:%d\n", __func__, __LINE__, rc);
+			goto EXIT2;
+		}
+		CDBG("%s:%d 0xF0 = 0x%x\n", __func__, __LINE__, reg_data);
+		if (0x72 == reg_data) {
+			do {
+				msleep(1);
+				rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+					&a_ctrl->i2c_client,
+					0xE0,
+					&reg_data,
+					1);
+				if (rc < 0) {
+					pr_err("%s:%d i2c read error:%d\n", __func__, __LINE__, rc);
+					goto EXIT2;
+				}
+			} while (((++download_retry_times) < 5) && (0x0 != reg_data));
+			CDBG("%s:%d 0xE0 = 0x%x\n", __func__, __LINE__, reg_data);
+			if (0x0 == reg_data) {
+				CDBG("%s:%d enable write\n", __func__, __LINE__);
+				for (i = 0; i < 3; i++) {
+					if (0x80 == enable_reg_arr[i].reg_addr) {
+						rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+							&a_ctrl->i2c_client,
+							0x80,
+							&reg_data,
+							1);
+						if (rc < 0) {
+							pr_err("%s:%d i2c read error:%d\n", __func__, __LINE__, rc);
+							goto EXIT2;
+						}
+						enable_reg_arr[i].reg_data = reg_data | 0x01;
+					}
+					rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+						&a_ctrl->i2c_client,
+						enable_reg_arr[i].reg_addr,
+						enable_reg_arr[i].reg_data,
+						1);
+					if (rc < 0) {
+						pr_err("%s:%d i2c write error:%d\n", __func__, __LINE__, rc);
+						rc = -1;
+						goto EXIT2;
+					}
+				}
+				pr_err("%s:%d check eeprom data\n", __func__, __LINE__);
+				a_ctrl->i2c_client.cci_client->sid = eeprom_addr;
+				for (i = 0; i < UPDATE_REG_SIZE; i++) {
+					rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+						&a_ctrl->i2c_client,
+						update_reg_arr[i].reg_addr,
+						&reg_data,
+						1);
+					if (rc < 0) {
+						pr_err("%s:%d i2c read error:%d\n", __func__, __LINE__, rc);
+						goto EXIT1;
+					}
+					pr_err("%s:i2c read I2C reg_addr:0x%0x=0x%0x\n", __func__,
+						update_reg_arr[i].reg_addr, reg_data);
+					if (reg_data != update_reg_arr[i].reg_data) {
+						need_to_update = true;
+						break;
+					}
+				}
+				if (need_to_update)
+					pr_err("%s:%d need to update", __func__, __LINE__);
+				else
+					pr_err("%s:%d no need to update", __func__, __LINE__);
+
+				while (need_to_update && (++retry_times < 4)) {
+					for (i = 0; i < UPDATE_REG_SIZE; i++) {
+						rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+							&a_ctrl->i2c_client,
+							update_reg_arr[i].reg_addr,
+							update_reg_arr[i].reg_data,
+							1);
+						if (rc < 0) {
+							pr_err("%s:%d i2c write error:%d\n",
+							__func__, __LINE__, rc);
+							goto EXIT1;
+						}
+						msleep(30);
+						rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+							&a_ctrl->i2c_client,
+							update_reg_arr[i].reg_addr,
+							&reg_data,
+							1);
+						if (rc < 0) {
+							pr_err("%s:%d i2c read error:%d\n",
+							__func__, __LINE__, rc);
+							goto EXIT1;
+						}
+					    pr_err("%s:i2c read I2C reg_addr:0x%0x=0x%0x\n", __func__,
+							update_reg_arr[i].reg_addr, reg_data);
+						if (reg_data != update_reg_arr[i].reg_data)
+							break;
+					}
+					if (UPDATE_REG_SIZE == i) {
+						pr_err("%s:%d update successfully\n",
+						__func__, __LINE__);
+						break;
+					}
+				}
+				if (4 == retry_times) {
+					pr_err("%s:%d update failed\n",
+						__func__, __LINE__);
+					if (0xE4 >> 1 == actuator_addr)
+						is_imx398_updated = false;
+					else if (0xE8 >> 1 == actuator_addr)
+						is_imx350_updated = false;
+				}
+
+				a_ctrl->i2c_client.cci_client->sid = actuator_addr;
+				for (i = 0; i < 3; i++) {
+					if (0x80 == disable_reg_arr[i].reg_addr) {
+						rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+							&a_ctrl->i2c_client,
+							0x80,
+							&reg_data,
+							1);
+						if (rc < 0) {
+							pr_err("%s:%d i2c read error:%d\n",
+								__func__, __LINE__, rc);
+							goto EXIT2;
+						}
+						disable_reg_arr[i].reg_data = reg_data & 0x0;
+					}
+					rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+						&a_ctrl->i2c_client,
+						disable_reg_arr[i].reg_addr,
+						disable_reg_arr[i].reg_data,
+						1);
+					if (rc < 0) {
+						pr_err("%s:%d i2c write error:%d\n",
+							__func__, __LINE__, rc);
+						goto EXIT2;
+					}
+				}
+			} else {
+				pr_err("%s:%d 0xE0 = 0x%x, download not done\n",
+					__func__, __LINE__,
+					reg_data);
+				if (0xE4 >> 1 == actuator_addr)
+					is_imx398_updated = false;
+				else if (0xE8 >> 1 == actuator_addr)
+					is_imx350_updated = false;
+				return -1;
+			}
+		} else {
+			pr_err("%s:%d 0xF0 = 0x%x, is not LC898217\n",
+			__func__, __LINE__, reg_data);
+			return 0;
+		}
+	} else {
+		if (0xE4 >> 1 == a_ctrl->i2c_client.cci_client->sid){
+			pr_err("imx398 already updated\n");
+			return 0;
+		}
+		else if (0xE8 >> 1 == a_ctrl->i2c_client.cci_client->sid){
+			pr_err("imx350 already updated\n");
+			return 0;
+		}else{
+			pr_err("incorrect sensor or cci\n");
+			return -1;
+		}
+	}
+
+	return 0;
+
+EXIT1:
+	a_ctrl->i2c_client.cci_client->sid = actuator_addr;
+	for (i = 0; i < 3; i++) {
+		if (0x80 == disable_reg_arr[i].reg_addr) {
+			rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&a_ctrl->i2c_client,
+				0x80,
+				&reg_data,
+				1);
+			disable_reg_arr[i].reg_data = reg_data & 0x0;
+		}
+		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+			&a_ctrl->i2c_client,
+			disable_reg_arr[i].reg_addr,
+			disable_reg_arr[i].reg_data,
+			1);
+	}
+EXIT2:
+	if (0xE4 >> 1 == actuator_addr)
+		is_imx398_updated = false;
+	else if (0xE8 >> 1 == actuator_addr)
+		is_imx350_updated = false;
+
+	return rc;
+}
+#endif
+
+#ifdef VENDOR_EDIT
+/*add by hongbo.dai@camera 20170513 for load firmware ton actuator */
+#define LOADING_OFFSET (4)
+static int32_t msm_actuator_write_firmware_sunny(struct msm_actuator_ctrl_t *a_ctrl,int id)
+{
+	struct msm_camera_i2c_reg_setting reg_setting;
+	struct msm_camera_i2c_reg_setting write_reg_setting;
+	struct msm_camera_i2c_reg_setting check_reg_setting;
+	struct msm_camera_i2c_reg_setting check_status_reg_setting;
+	int32_t rc = 0;
+	int16_t reg_val = 0;
+	int i = 0;
+	bool need_update = false;
+	int retry = 0;
+	CDBG("Enter\n");
+
+	if (id != 0 && id != 2)
+		return -1;
+	if (id == 0) {
+		pr_err("%s write rear Camera firmware entry\n",__func__);
+		reg_setting.reg_setting = ak7374_imx398_reg_setting;
+		reg_setting.size = sizeof(ak7374_imx398_reg_setting)/sizeof(struct msm_camera_i2c_reg_array);
+		write_reg_setting.reg_setting = ak7374_imx398_write_reg_setting;
+		write_reg_setting.size = sizeof(ak7374_imx398_write_reg_setting)/sizeof(struct msm_camera_i2c_reg_array);
+		check_reg_setting.reg_setting = ak7374_imx398_check_reg_setting;
+		check_reg_setting.size = sizeof(ak7374_imx398_check_reg_setting)/sizeof(struct msm_camera_i2c_reg_array);
+		check_status_reg_setting.reg_setting = ak7374_imx398_check_status_setting;
+		check_status_reg_setting.size= sizeof(ak7374_imx398_check_status_setting)/sizeof(struct msm_camera_i2c_reg_array);
+	} else {
+		pr_err("%s write Aux Camera firmware entry\n",__func__);
+		reg_setting.reg_setting = ak7374_imx350_reg_setting;
+		reg_setting.size = sizeof(ak7374_imx350_reg_setting)/sizeof(struct msm_camera_i2c_reg_array);
+		write_reg_setting.reg_setting = ak7374_imx350_write_reg_setting;
+		write_reg_setting.size = sizeof(ak7374_imx350_write_reg_setting)/sizeof(struct msm_camera_i2c_reg_array);
+		check_reg_setting.reg_setting = ak7374_imx350_check_reg_setting;
+		check_reg_setting.size = sizeof(ak7374_imx350_check_reg_setting)/sizeof(struct msm_camera_i2c_reg_array);
+		check_status_reg_setting.reg_setting = ak7374_imx350_check_status_setting;
+		check_status_reg_setting.size = sizeof(ak7374_imx350_check_status_setting)/sizeof(struct msm_camera_i2c_reg_array);
+	}
+
+	reg_setting.data_type = MSM_CAMERA_I2C_BYTE_DATA;
+	reg_setting.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+	reg_setting.delay = 0;
+	write_reg_setting.data_type = MSM_CAMERA_I2C_BYTE_DATA;
+	write_reg_setting.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+	write_reg_setting.delay = 0;
+	check_reg_setting.data_type = MSM_CAMERA_I2C_BYTE_DATA;
+	check_reg_setting.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+	check_reg_setting.delay = 0;
+	check_status_reg_setting.data_type = MSM_CAMERA_I2C_BYTE_DATA;
+	check_status_reg_setting.addr_type = MSM_CAMERA_I2C_BYTE_ADDR;
+	check_status_reg_setting.delay = 0;
+
+	for (i = 0; i < write_reg_setting.size; i++){
+		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+			&a_ctrl->i2c_client,
+			write_reg_setting.reg_setting[i].reg_addr,
+			write_reg_setting.reg_setting[i].reg_data,
+			write_reg_setting.data_type);
+		if (rc < 0) {
+			pr_err("%s write Err",__func__);
+			return -1;
+		}
+		CDBG("%s I2C write reg_addr:0x%02x=0x%02x\n",
+			__func__,write_reg_setting.reg_setting[i].reg_addr,
+			write_reg_setting.reg_setting[i].reg_data);
+
+		if (write_reg_setting.reg_setting[i].delay > 0)
+			msleep(write_reg_setting.reg_setting[i].delay);
+	}
+	for (i = 0; i < check_status_reg_setting.size; i++) {
+		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+			&a_ctrl->i2c_client,
+			check_status_reg_setting.reg_setting[i].reg_addr,
+			&reg_val,
+			check_status_reg_setting.data_type);
+
+		CDBG("%s I2C read reg_addr:0x%02x=0x%02x\n",
+			__func__,reg_setting.reg_setting[i].reg_addr,reg_val);
+
+		if (check_status_reg_setting.reg_setting[i].delay > 0)
+			msleep(check_status_reg_setting.reg_setting[i].delay);
+	}
+
+	for (i = 0; i < check_reg_setting.size; i++){
+		rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+			&a_ctrl->i2c_client,
+			check_reg_setting.reg_setting[i].reg_addr,
+			check_reg_setting.reg_setting[i].reg_data,
+			check_reg_setting.data_type);
+		CDBG("%s I2C write reg_addr:0x%02x=0x%02x\n",
+			__func__,check_reg_setting.reg_setting[i].reg_addr,
+			check_reg_setting.reg_setting[i].reg_data);
+		if (rc < 0) {
+			pr_err("%s write Err",__func__);
+			return -1;
+		}
+
+		if (check_reg_setting.reg_setting[i].delay > 0)
+			msleep(reg_setting.reg_setting[i].delay);
+	}
+
+	do{
+		pr_err("%s check data  times:%d \n",__func__,retry);
+		for (i = 0; i < (reg_setting.size-LOADING_OFFSET); i++) {
+			rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_read(
+				&a_ctrl->i2c_client,
+				reg_setting.reg_setting[i].reg_addr,
+				&reg_val,reg_setting.data_type);
+			if (rc < 0) {
+				pr_err("%s read Err",__func__);
+				return -1;
+			}
+
+			pr_err("%s I2C read reg_addr:0x%02x=0x%02x\n",
+				__func__,reg_setting.reg_setting[i].reg_addr,reg_val);
+
+			if (reg_val != reg_setting.reg_setting[i].reg_data){
+				need_update = true;
+				pr_err("%s I2C read reg_addr:0x%02x=0x%02x,should be:0x%02x is not match\n",
+					__func__,reg_setting.reg_setting[i].reg_addr,reg_val,
+					reg_setting.reg_setting[i].reg_data);
+				pr_err("%s need to update firmware",__func__);
+				break;
+			}
+			if (i >= (reg_setting.size-LOADING_OFFSET-1)) {
+				need_update = false;
+				break;
+			}
+		}
+
+		if (need_update) {
+			if (retry >= 3) {
+				pr_err("%s retry more than 3 times,write firmware fail!!!\n",__func__);
+				return 0;
+			}
+			for (i = 0; i < reg_setting.size; i++) {
+				rc = a_ctrl->i2c_client.i2c_func_tbl->i2c_write(
+					&a_ctrl->i2c_client,
+					reg_setting.reg_setting[i].reg_addr,
+					reg_setting.reg_setting[i].reg_data,
+					reg_setting.data_type);
+
+				if (rc < 0) {
+					pr_err("%s write Err",__func__);
+					return -1;
+				}
+				CDBG("%s I2C write reg_addr:0x%02x=0x%02x\n",
+					__func__,reg_setting.reg_setting[i].reg_addr,
+					reg_setting.reg_setting[i].reg_data);
+
+				if (reg_setting.reg_setting[i].delay > 0)
+					msleep(reg_setting.reg_setting[i].delay);
+			}
+			retry++;
+		}
+		else{
+			pr_err("%s no need to update",__func__);
+			break;
+		}
+	}while (retry < 3);
+	CDBG("Exit\n");
+	return rc;
+}
+
+#endif
 
 static int32_t msm_actuator_piezo_set_default_focus(
 	struct msm_actuator_ctrl_t *a_ctrl,
@@ -586,12 +1041,15 @@ static int32_t msm_actuator_move_focus(
 	int32_t num_steps = move_params->num_steps;
 	struct msm_camera_i2c_reg_setting reg_setting;
 
-	CDBG("called, dir %d, num_steps %d\n", dir, num_steps);
-
+#ifdef VENDOR_EDIT
+/*modified by Zhengrong.Zhang@Camera 20160922 for avoid NULL pointer operation*/
 	if (a_ctrl->step_position_table == NULL) {
-		pr_err("Step Position Table is NULL\n");
-		return -EINVAL;
+		pr_err("Step Position Table is NULL");
+		return -EFAULT;
 	}
+#endif
+
+	CDBG("called, dir %d, num_steps %d\n", dir, num_steps);
 
 	if ((dest_step_pos == a_ctrl->curr_step_pos) ||
 		((dest_step_pos <= a_ctrl->total_steps) &&
@@ -839,6 +1297,8 @@ static int32_t msm_actuator_park_lens(struct msm_actuator_ctrl_t *a_ctrl)
 		a_ctrl->park_lens.max_step = a_ctrl->max_code_size;
 
 	next_lens_pos = a_ctrl->step_position_table[a_ctrl->curr_step_pos];
+#ifndef VENDOR_EDIT
+/*Jindian.Guan@Camera.Drv, 2018/2/3, modify for [tick sound of parking lens]*/
 	while (next_lens_pos) {
 		/* conditions which help to reduce park lens time */
 		if (next_lens_pos > (a_ctrl->park_lens.max_step *
@@ -882,6 +1342,53 @@ static int32_t msm_actuator_park_lens(struct msm_actuator_ctrl_t *a_ctrl)
 		/* Use typical damping time delay to avoid tick sound */
 		usleep_range(10000, 12000);
 	}
+#else
+	while (next_lens_pos) {
+		/* conditions which help to reduce park lens time */
+		if (next_lens_pos > PARK_LENS_LONG_POS && next_lens_pos > (a_ctrl->park_lens.max_step *
+			PARK_LENS_LONG_STEP)) {
+			next_lens_pos = next_lens_pos -
+				(a_ctrl->park_lens.max_step *
+				PARK_LENS_LONG_STEP);
+		} else if (next_lens_pos > PARK_LENS_MID_POS && next_lens_pos > (a_ctrl->park_lens.max_step *
+			PARK_LENS_MID_STEP)) {
+			next_lens_pos = next_lens_pos -
+				(a_ctrl->park_lens.max_step *
+				PARK_LENS_MID_STEP);
+		} else if (next_lens_pos > (a_ctrl->park_lens.max_step *
+			PARK_LENS_SMALL_STEP)) {
+			next_lens_pos = next_lens_pos -
+				(a_ctrl->park_lens.max_step *
+				PARK_LENS_SMALL_STEP);
+		} else {
+			next_lens_pos = (next_lens_pos >
+				a_ctrl->park_lens.max_step) ?
+				(next_lens_pos - a_ctrl->park_lens.
+				max_step) : 0;
+		}
+		a_ctrl->func_tbl->actuator_parse_i2c_params(a_ctrl,
+			next_lens_pos, a_ctrl->park_lens.hw_params,
+			a_ctrl->park_lens.damping_delay);
+
+		reg_setting.reg_setting = a_ctrl->i2c_reg_tbl;
+		reg_setting.size = a_ctrl->i2c_tbl_index;
+		reg_setting.data_type = a_ctrl->i2c_data_type;
+
+		rc = a_ctrl->i2c_client.i2c_func_tbl->
+			i2c_write_table_w_microdelay(
+			&a_ctrl->i2c_client, &reg_setting);
+		if (rc < 0) {
+			pr_err("%s Failed I2C write Line %d\n",
+				__func__, __LINE__);
+			return rc;
+		}
+		a_ctrl->i2c_tbl_index = 0;
+		/* Use typical damping time delay to avoid tick sound */
+		usleep_range(6000, 8000);
+		if (next_lens_pos <= PARK_LENS_MIN_POS)
+			break;
+	}
+#endif
 
 	return 0;
 }
@@ -994,9 +1501,18 @@ static int32_t msm_actuator_init_step_table(struct msm_actuator_ctrl_t *a_ctrl,
 
 	a_ctrl->max_code_size = max_code_size;
 
+#ifdef VENDOR_EDIT
+/*modified by Zhengrong.Zhang@Camera 20160922 for avoid NULL pointer operation*/
+	/* free the step_position_table to allocate a new one */
+	if (a_ctrl->step_position_table != NULL)
+		kfree(a_ctrl->step_position_table);
+	a_ctrl->step_position_table = NULL;
+
+#else
 	/* free the step_position_table to allocate a new one */
 	kfree(a_ctrl->step_position_table);
 	a_ctrl->step_position_table = NULL;
+#endif
 
 	if (set_info->af_tuning_params.total_steps
 		>  MAX_ACTUATOR_AF_TOTAL_STEPS) {
@@ -1033,6 +1549,17 @@ static int32_t msm_actuator_init_step_table(struct msm_actuator_ctrl_t *a_ctrl,
 			a_ctrl->step_position_table = NULL;
 			return -EINVAL;
 		}
+		/*initial the actuator data,when 17081 T0 Phase*/
+		if ((project == 17081) && a_ctrl->is_empty_eeprom) {
+			pr_err("17081 T0 phase sensor no eeprom,initial defaul actuator data here");
+			step_boundary = 500;
+			qvalue = 1;
+			code_per_step = 1;
+			cur_code = 150;
+			set_info->af_tuning_params.initial_code = 100;
+		}
+		pr_err("af total_steps:%d",set_info->af_tuning_params.total_steps);
+
 		for (; step_index <= step_boundary;
 			step_index++) {
 			if (qvalue > 1 && qvalue <= MAX_QVALUE)
@@ -1436,6 +1963,19 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 	struct msm_actuator_cfg_data *cdata =
 		(struct msm_actuator_cfg_data *)argp;
 	int32_t rc = -EINVAL;
+	#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera*/
+	struct file *mfile;
+	char vendor_id[8] = {'\0'};
+	char data_info[5] = {'\0'};
+	char vcm_id[8] = {'\0'};
+	char VCM_JHC8029B0[] = "0x36";
+	ssize_t size;
+	loff_t offsize;
+	mm_segment_t old_fs;
+	int32_t fw_rc = 0;
+	int32_t fw_loaded = 0;
+	#endif
 	mutex_lock(a_ctrl->actuator_mutex);
 	CDBG("Enter\n");
 	CDBG("%s type %d\n", __func__, cdata->cfgtype);
@@ -1453,6 +1993,87 @@ static int32_t msm_actuator_config(struct msm_actuator_ctrl_t *a_ctrl,
 		rc = msm_actuator_init(a_ctrl);
 		if (rc < 0)
 			pr_err("msm_actuator_init failed %d\n", rc);
+		#ifdef VENDOR_EDIT
+		/*add by hongbo.dai@camera 20170513 for load firmware actuator */
+		if (a_ctrl->firmware_load) {
+			mfile = filp_open("/proc/rear_eeprom_info", O_RDONLY,0644);
+			if (IS_ERR(mfile)) {
+				pr_err("open file rear_eeprom_info error:\n");
+				break;
+			}
+
+			old_fs = get_fs();
+			set_fs(KERNEL_DS);
+			offsize = 0;
+			size = vfs_read(mfile,vendor_id,sizeof(vendor_id),&offsize);
+			if (size < 0) {
+				pr_err("Can not read vcm_info from the file ");
+			}
+			if (strcmp(vendor_id, empty_eeprom_data) == 0) {
+				a_ctrl->is_empty_eeprom = true;
+			}
+			set_fs(old_fs);
+			filp_close(mfile,NULL);
+
+			CDBG("msm_actuator_write_firmware vendor_id:%s  cam_nam:%d\n", vendor_id,a_ctrl->cam_name);
+
+			if (strcmp(vendor_id, "3") == 0) {
+				/*add by hongbo.dai@camera,20170610 support both old and new semco actuator*/
+				mfile = filp_open("/proc/rear_date_info", O_RDONLY,0644);
+				if (IS_ERR(mfile)) {
+					pr_err("open file rear_eeprom_date_info error:\n");
+					break;
+				}
+
+				old_fs = get_fs();
+				set_fs(KERNEL_DS);
+				offsize = 0;
+				size = vfs_read(mfile,data_info,sizeof(data_info),&offsize);
+				if (size < 0) {
+					pr_err("Can not read from date info the file ");
+				}
+
+				set_fs(old_fs);
+				filp_close(mfile,NULL);
+				if (strcmp(data_info, "1") == 0) {
+					fw_rc = msm_actuator_write_firmware_semco(a_ctrl);
+					if(fw_rc >= 0)
+						fw_loaded = 1;
+				}else if (strcmp(data_info, "0") == 0) {
+					pr_err("old actuator, no need to update firmware");
+					a_ctrl->firmware_load = false;
+				}
+			}    //modify by hongbo.Dai@Camera 20170808,only JHC-8029-B0 need to update
+			else {
+				mfile = filp_open("/proc/rear_vcm_id", O_RDONLY, 0644);
+				if (IS_ERR(mfile)) {
+					pr_err("open file rear_eeprom_date_info error:\n");
+					a_ctrl->firmware_load = false;
+					break;
+				}
+				old_fs = get_fs();
+				set_fs(KERNEL_DS);
+				offsize = 0;
+				size = vfs_read(mfile, vcm_id, sizeof(vcm_id), &offsize);
+				if (size < 0) {
+					pr_err("Can not read from vcm_id the file ");
+				}
+
+				set_fs(old_fs);
+				filp_close(mfile, NULL);
+				if (strcmp(vcm_id, VCM_JHC8029B0) == 0) {
+					fw_rc = msm_actuator_write_firmware_sunny(a_ctrl, a_ctrl->cam_name);
+					if (fw_rc >= 0)
+						fw_loaded = 1;
+				} else {
+					a_ctrl->firmware_load = false;
+				}
+			}
+			if (fw_loaded > 0) {
+				a_ctrl->firmware_load = false;
+			}
+		}
+		#endif
 		break;
 	case CFG_GET_ACTUATOR_INFO:
 		cdata->is_af_supported = 1;
@@ -2021,6 +2642,13 @@ static int32_t msm_actuator_platform_probe(struct platform_device *pdev)
 	msm_actuator_t->msm_sd.sd.flags |= V4L2_SUBDEV_FL_HAS_DEVNODE;
 	snprintf(msm_actuator_t->msm_sd.sd.name,
 		ARRAY_SIZE(msm_actuator_t->msm_sd.sd.name), "msm_actuator");
+	#ifdef VENDOR_EDIT
+	/*add by hongbo.dai@camera 20170514*/
+	msm_actuator_t->firmware_load = true;
+	msm_actuator_t->is_empty_eeprom = false;
+	project = get_project();
+	pr_err("func:%s,get project:%d\n",__func__,project);
+	#endif
 	media_entity_init(&msm_actuator_t->msm_sd.sd.entity, 0, NULL, 0);
 	msm_actuator_t->msm_sd.sd.entity.type = MEDIA_ENT_T_V4L2_SUBDEV;
 	msm_actuator_t->msm_sd.sd.entity.group_id = MSM_CAMERA_SUBDEV_ACTUATOR;

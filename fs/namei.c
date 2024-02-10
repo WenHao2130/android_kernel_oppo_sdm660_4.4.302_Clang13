@@ -49,8 +49,8 @@
  * The new code replaces the old recursive symlink resolution with
  * an iterative one (in case of non-nested symlink chains).  It does
  * this with calls to <fs>_follow_link().
- * As a side effect, dir_namei(), _namei() and follow_link() are now 
- * replaced with a single function lookup_dentry() that can handle all 
+ * As a side effect, dir_namei(), _namei() and follow_link() are now
+ * replaced with a single function lookup_dentry() that can handle all
  * the special cases of the former code.
  *
  * With the new dcache, the pathname is stored at each inode, at least as
@@ -120,6 +120,11 @@
  */
 
 #define EMBEDDED_NAME_MAX	(PATH_MAX - offsetof(struct filename, iname))
+
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+#define DCIM_DELETE_ERR  999
+#endif /* VENDOR_EDIT */
 
 struct filename *
 getname_flags(const char __user *filename, int flags, int *empty)
@@ -2589,7 +2594,14 @@ static int may_delete(struct vfsmount *mnt, struct inode *dir, struct dentry *vi
 		return -ENOENT;
 	BUG_ON(!inode);
 
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdcardFs.1444856, 2018/06/26, Add for avoid crash when dcim proctect
+	if (victim->d_parent->d_inode != dir) {
+		return -EBUSY;
+	}
+#else
 	BUG_ON(victim->d_parent->d_inode != dir);
+#endif /* VENDOR_EDIT */
 	audit_inode_child(dir, victim, AUDIT_TYPE_CHILD_DELETE);
 
 	error = inode_permission2(mnt, dir, MAY_WRITE | MAY_EXEC);
@@ -3817,6 +3829,11 @@ exit3:
 	dput(dentry);
 exit2:
 	mutex_unlock(&path.dentry->d_inode->i_mutex);
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+	if (error == DCIM_DELETE_ERR)
+		error = 0;
+#endif /* VENDOR_EDIT */
 	mnt_drop_write(path.mnt);
 exit1:
 	path_put(&path);
@@ -3947,6 +3964,11 @@ exit2:
 		dput(dentry);
 	}
 	mutex_unlock(&path.dentry->d_inode->i_mutex);
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
+	if (error == DCIM_DELETE_ERR)
+		error = 0;
+#endif /* VENDOR_EDIT */
 	if (inode)
 		iput(inode);	/* truncate the inode here */
 	inode = NULL;
@@ -3964,6 +3986,7 @@ exit1:
 		inode = NULL;
 		goto retry;
 	}
+	debug_record_file("delete", pathname, error);
 	return error;
 
 slashes:
@@ -4549,6 +4572,7 @@ exit1:
 		goto retry;
 	}
 exit:
+	debug_record_file("rename", oldname, error);
 	return error;
 }
 

@@ -130,7 +130,10 @@ enum {
 	 */
 	FLUSH_PENDING_TIMEOUT	= 5 * HZ,
 };
-
+#ifdef VENDOR_EDIT
+/*jason.tang@TECH.BSP.Kernel.Storage, 2019-05-20, add to count flush*/
+extern unsigned long sysctl_blkdev_issue_flush_count;
+#endif
 static bool blk_kick_flush(struct request_queue *q,
 			   struct blk_flush_queue *fq);
 
@@ -535,6 +538,10 @@ static int __blkdev_issue_flush(struct block_device *bdev, gfp_t gfp_mask,
 	 */
 	if (!q->make_request_fn)
 		return -ENXIO;
+#ifdef VENDOR_EDIT
+	/*jason.tang@TECH.BSP.Kernel.Storage, 2019-05-20, add to count flush*/
+	sysctl_blkdev_issue_flush_count++;
+#endif
 
 	bio = bio_alloc(gfp_mask, 0);
 	bio->bi_bdev = bdev;

@@ -34,10 +34,28 @@
 #include "gc.h"
 #include "trace.h"
 
+#ifdef CONFIG_FB
+#include <linux/fb.h>
+#include <linux/notifier.h>
+#endif
+#ifdef CONFIG_DRM_MSM
+#include <linux/msm_drm_notify.h>
+#endif
+#include <linux/power_supply.h>
+
 #define CREATE_TRACE_POINTS
 #include <trace/events/f2fs.h>
 
 static struct kmem_cache *f2fs_inode_cachep;
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+static LIST_HEAD(all_f2fs_sbi);
+spinlock_t sb_list_lock;
+unsigned long odc_wakeup_interval = 0;
+struct f2fs_device_state f2fs_device;
+int gc_dc_opt = 1;
+#endif
 
 #ifdef CONFIG_F2FS_FAULT_INJECTION
 
@@ -201,7 +219,7 @@ void f2fs_msg(struct super_block *sb, const char *level, const char *fmt, ...)
 	va_start(args, fmt);
 	vaf.fmt = fmt;
 	vaf.va = &args;
-	printk_ratelimited("%sF2FS-fs (%s): %pV\n", level, sb->s_id, &vaf);
+	printk("%sF2FS-fs (%s): %pV\n", level, sb->s_id, &vaf);
 	va_end(args);
 }
 
@@ -236,6 +254,149 @@ static void init_once(void *foo)
 
 	inode_init_once(&fi->vfs_inode);
 }
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+void odiscard_wake_up_thread(void)
+{
+	struct f2fs_sb_info *sbi = NULL;
+	struct list_head *p;
+
+	spin_lock(&sb_list_lock);
+	p = all_f2fs_sbi.next;
+	while (p != &all_f2fs_sbi) {
+		sbi = list_entry(p, struct f2fs_sb_info, sbi_list);
+		p = p->next;
+		if (sbi->last_wp_odc_jiffies &&
+			time_before(jiffies, sbi->last_wp_odc_jiffies + odc_wakeup_interval)) {
+			//printk(KERN_INFO  "my debug %s: jiffies=%lu next=%lu, sbi=0x%p\n", __func__, jiffies, sbi->last_wp_odc_jiffies + odc_wakeup_interval, sbi);
+			continue;
+		}
+
+		//printk(KERN_INFO  "my debug %s %d: sbi->odiscard_already_run=%d\n", __func__, __LINE__, sbi->odiscard_already_run);
+		if (!f2fs_device.battery_charging && sbi->odiscard_already_run) {
+			continue;
+		}
+		//printk(KERN_INFO  "my debug %s, exec wake_up_odiscard, sbi=0x%p\n", __func__, sbi);
+		wake_up_odiscard(sbi);
+	}
+	spin_unlock(&sb_list_lock);
+}
+void odiscard_updatae_state(void)
+{
+	struct f2fs_sb_info *sbi = NULL;
+	struct list_head *p;
+
+	spin_lock(&sb_list_lock);
+	p = all_f2fs_sbi.next;
+	while (p != &all_f2fs_sbi) {
+		sbi = list_entry(p, struct f2fs_sb_info, sbi_list);
+		p = p->next;
+		sbi->odiscard_already_run = 0;
+	}
+	spin_unlock(&sb_list_lock);
+}
+
+static int f2fs_fb_notify_callback(struct notifier_block *nb, unsigned long val, void *data)
+{
+	struct fb_event *evdata = data;
+	int *blank;
+#ifdef CONFIG_DRM_MSM
+	if(val != MSM_DRM_EARLY_EVENT_BLANK && val != MSM_DRM_EVENT_BLANK) {
+#else
+    if (val != FB_EVENT_BLANK && val != FB_EARLY_EVENT_BLANK) {
+#endif
+		return 0;
+    }
+
+    if(evdata && evdata->data) {
+        blank = evdata->data;
+        #ifdef CONFIG_DRM_MSM
+        if (*blank == MSM_DRM_BLANK_POWERDOWN) { //suspend
+             if (val == MSM_DRM_EARLY_EVENT_BLANK) {    //early event
+        #else
+        if (*blank == FB_BLANK_POWERDOWN) { //suspend
+            if (val == FB_EARLY_EVENT_BLANK) {    //early event
+        #endif
+				f2fs_device.screen_off = true;
+				if (f2fs_device.battery_charging || f2fs_device.battery_percent>= BATTERY_THRESHOLD) {
+					//printk(KERN_INFO  "my debug %s %d:f2fs_device.screen_off true, battery 30,exec odiscard_wake_up_thread\n", __func__, __LINE__);
+					odiscard_wake_up_thread();
+				}
+            }
+        }
+        #ifdef CONFIG_DRM_MSM
+        else if (*blank == MSM_DRM_BLANK_UNBLANK) { //resume
+             if (val == MSM_DRM_EVENT_BLANK) {    //event
+        #else
+        else if (*blank == FB_BLANK_UNBLANK) { //resume
+            if (val == FB_EVENT_BLANK) {    //event
+        #endif
+				//printk(KERN_INFO  "my debug %s %d:f2fs_device.screen on\n", __func__, __LINE__);
+				f2fs_device.screen_off = false;
+				odiscard_updatae_state();
+            }
+        }
+    }
+	return NOTIFY_OK;
+}
+static struct notifier_block f2fs_fb_notify_block = {
+	.notifier_call =  f2fs_fb_notify_callback,
+};
+
+static int f2fs_battery_notify_callback(struct notifier_block *nb,
+	unsigned long ev, void *v)
+{
+	int err = 0;
+	static int count = 0;
+	union power_supply_propval status;
+	struct power_supply *psy = v;
+
+	if (0 != count && count < CHECK_BATTERY_SKIP_COUNT) {
+		count++;
+		return NOTIFY_DONE;
+	}
+	if (count++ >= CHECK_BATTERY_SKIP_COUNT) {
+		count=1;
+	}
+
+	if (ev != PSY_EVENT_PROP_CHANGED) {
+		return NOTIFY_OK;
+	}
+	err = power_supply_get_property(psy,
+					POWER_SUPPLY_PROP_STATUS, &status);
+	if (err) {
+		f2fs_device.battery_charging = false;
+		f2fs_device.battery_percent = 0;
+		return NOTIFY_DONE;
+	}
+	if (POWER_SUPPLY_STATUS_CHARGING == status.intval) {
+		//printk("my debug %s %d:charging, exec odiscard_wake_up_thread\n", __func__, __LINE__);
+		f2fs_device.battery_charging = true;
+		odiscard_wake_up_thread();
+	} else {
+		//printk("my debug %s %d:not charging\n", __func__, __LINE__);
+		f2fs_device.battery_charging = false;
+
+		err = power_supply_get_property(psy,
+				POWER_SUPPLY_PROP_CAPACITY, &status);
+		if (!err) {
+			f2fs_device.battery_percent = status.intval;
+			//printk("my debug %s %d:battery pecent=%d\n", __func__, __LINE__, f2fs_device.battery_percent);
+		} else {
+			f2fs_device.battery_percent = 0;
+		}
+	}
+
+	return NOTIFY_DONE;
+}
+
+
+static struct notifier_block f2fs_battery_notify_block = {
+	.notifier_call =  f2fs_battery_notify_callback,
+};
+#endif
+
 
 #ifdef CONFIG_QUOTA
 static const char * const quotatypes[] = INITQFNAMES;
@@ -987,6 +1148,14 @@ static void f2fs_put_super(struct super_block *sb)
 	int i;
 	bool dropped;
 
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		spin_lock(&sb_list_lock);
+		list_del(&sbi->sbi_list);
+		spin_unlock(&sb_list_lock);
+#endif
+
+
 	f2fs_quota_off_umount(sb);
 
 	/* prevent remaining shrinker jobs */
@@ -1006,7 +1175,7 @@ static void f2fs_put_super(struct super_block *sb)
 	}
 
 	/* be sure to wait for any on-going discard commands */
-	dropped = f2fs_wait_discard_bios(sbi);
+	dropped = f2fs_issue_discard_timeout(sbi);
 
 	if (f2fs_discard_en(sbi) && !sbi->discard_blks && !dropped) {
 		struct cp_control cpc = {
@@ -1056,6 +1225,10 @@ static void f2fs_put_super(struct super_block *sb)
 	destroy_percpu_info(sbi);
 	for (i = 0; i < NR_PAGE_TYPE; i++)
 		kfree(sbi->write_io[i]);
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019-09-17, log last fsync after last cp in panic */
+	atomic_notifier_chain_unregister(&panic_notifier_list, &sbi->panic_notifier);
+#endif
 	kfree(sbi);
 }
 
@@ -1365,7 +1538,10 @@ static void default_options(struct f2fs_sb_info *sbi)
 	set_opt(sbi, EXTENT_CACHE);
 	set_opt(sbi, NOHEAP);
 	sbi->sb->s_flags |= MS_LAZYTIME;
+#ifndef VENDOR_EDIT
+/* guoweichao@TECH.Storage.FS.oF2FS, 2019/08/15, no need to flush_merge as we have reduced most flushes. */
 	set_opt(sbi, FLUSH_MERGE);
+#endif
 	if (f2fs_sb_has_blkzoned(sbi->sb)) {
 		set_opt_mode(sbi, F2FS_MOUNT_LFS);
 		set_opt(sbi, DISCARD);
@@ -1845,6 +2021,18 @@ void f2fs_quota_off_umount(struct super_block *sb)
 		f2fs_quota_off(sb, type);
 }
 
+static void f2fs_truncate_quota_inode_pages(struct super_block *sb)
+{
+	struct quota_info *dqopt = sb_dqopt(sb);
+	int type;
+
+	for (type = 0; type < MAXQUOTAS; type++) {
+		if (!dqopt->files[type])
+			continue;
+		f2fs_inode_synced(dqopt->files[type]);
+	}
+}
+
 #if 0
 static int f2fs_get_projid(struct inode *inode, kprojid_t *projid)
 {
@@ -2120,6 +2308,11 @@ static inline bool sanity_check_area_boundary(struct f2fs_sb_info *sbi,
 		} else {
 			err = __f2fs_commit_super(bh, NULL);
 			res = err ? "failed" : "done";
+#ifdef CONFIG_F2FS_BD_STAT
+			bd_lock(sbi);
+			bd_inc_array_val(sbi, hotcold_count, HC_META_SB, 1);
+			bd_unlock(sbi);
+#endif
 		}
 		f2fs_msg(sb, KERN_INFO,
 			"Fix alignment : %s, start(%u) end(%u) block(%u)",
@@ -2534,6 +2727,11 @@ int f2fs_commit_super(struct f2fs_sb_info *sbi, bool recover)
 	if (!bh)
 		return -EIO;
 	err = __f2fs_commit_super(bh, F2FS_RAW_SUPER(sbi));
+#ifdef CONFIG_F2FS_BD_STAT
+	bd_lock(sbi);
+	bd_inc_array_val(sbi, hotcold_count, HC_META_SB, 1);
+	bd_unlock(sbi);
+#endif
 	brelse(bh);
 
 	/* if we are in recovery path, skip writing valid superblock */
@@ -2545,6 +2743,12 @@ int f2fs_commit_super(struct f2fs_sb_info *sbi, bool recover)
 	if (!bh)
 		return -EIO;
 	err = __f2fs_commit_super(bh, F2FS_RAW_SUPER(sbi));
+#ifdef CONFIG_F2FS_BD_STAT
+	bd_lock(sbi);
+	bd_inc_array_val(sbi, hotcold_count, HC_META_SB, 1);
+	bd_unlock(sbi);
+#endif
+
 	brelse(bh);
 	return err;
 }
@@ -2661,6 +2865,25 @@ static void f2fs_tuning_parameters(struct f2fs_sb_info *sbi)
 	}
 }
 
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019-09-17, log last fsync after last cp in panic */
+static int f2fs_panic_callback(struct notifier_block *this,
+				unsigned long event, void *data)
+{
+	struct f2fs_sb_info *sbi = container_of(this,
+						struct f2fs_sb_info, panic_notifier);
+	unsigned long last_cp_time = f2fs_get_time(sbi, CP_TIME);
+	unsigned long last_fsync_time = f2fs_get_time(sbi, FSYNC_TIME);
+	//pr_emerg("%s\n", __func__);
+	if (time_after(last_fsync_time, last_cp_time)) {
+		pr_emerg("%s:panic happened! last fsync after last checkpoint,"
+			 " may data lost in ino:%u\n", __func__, sbi->last_fsync_ino);
+	}
+	return NOTIFY_DONE;
+}
+#endif
+
+extern int sysctl_f2fs_fsync_nobarrier;
 static int f2fs_fill_super(struct super_block *sb, void *data, int silent)
 {
 	struct f2fs_sb_info *sbi;
@@ -2682,6 +2905,16 @@ try_onemore:
 	sbi = kzalloc(sizeof(struct f2fs_sb_info), GFP_KERNEL);
 	if (!sbi)
 		return -ENOMEM;
+#ifdef CONFIG_F2FS_BD_STAT
+	sbi->bd_info = kzalloc(sizeof(struct f2fs_bigdata_info), GFP_KERNEL);
+	if (!sbi->bd_info) {
+		err = -ENOMEM;
+		goto free_sbi;
+	}
+	sbi->bd_info->ssr_last_jiffies = jiffies;
+	bd_lock_init(sbi);
+#endif
+
 
 	sbi->sb = sb;
 
@@ -2887,6 +3120,9 @@ try_onemore:
 		goto free_nm;
 	}
 
+	gc_dc_opt = 1;
+	sysctl_f2fs_fsync_nobarrier = 2;
+
 	/* For write statistics */
 	if (sb->s_bdev->bd_part)
 		sbi->sectors_written_start =
@@ -3021,14 +3257,30 @@ skip_recovery:
 				cur_cp_version(F2FS_CKPT(sbi)));
 	f2fs_update_time(sbi, CP_TIME);
 	f2fs_update_time(sbi, REQ_TIME);
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	spin_lock(&sb_list_lock);
+	list_add_tail(&sbi->sbi_list, &all_f2fs_sbi);
+	spin_unlock(&sb_list_lock);
+	sbi->last_wp_odc_jiffies = 0;
+	sbi->odiscard_already_run = 0;
+#endif
+
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019-09-17, log last fsync after last cp in panic */
+	sbi->panic_notifier.notifier_call = f2fs_panic_callback;
+	atomic_notifier_chain_register(&panic_notifier_list, &sbi->panic_notifier);
+#endif
+
 	return 0;
 
 free_meta:
 #ifdef CONFIG_QUOTA
+	f2fs_truncate_quota_inode_pages(sb);
 	if (f2fs_sb_has_quota_ino(sb) && !f2fs_readonly(sb))
 		f2fs_quota_off_umount(sbi->sb);
 #endif
-	f2fs_sync_inode_meta(sbi);
 	/*
 	 * Some dirty meta pages can be produced by f2fs_recover_orphan_inodes()
 	 * failed by EIO. Then, iput(node_inode) can trigger balance_fs_bg()
@@ -3136,6 +3388,7 @@ static void destroy_inodecache(void)
 static int __init init_f2fs_fs(void)
 {
 	int err;
+	struct timespec ts = {ODISCARD_WAKEUP_INTERVAL, 0};
 
 	if (PAGE_SIZE != F2FS_BLKSIZE) {
 		printk("F2FS not supported on PAGE_SIZE(%lu) != %d\n",
@@ -3175,6 +3428,30 @@ static int __init init_f2fs_fs(void)
 	err = f2fs_init_post_read_processing();
 	if (err)
 		goto free_root_stats;
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	spin_lock_init(&sb_list_lock);
+
+	odc_wakeup_interval = timespec_to_jiffies(&ts);
+
+	memset(&f2fs_device, 0, sizeof(struct f2fs_device_state));
+#if defined(CONFIG_DRM_MSM)
+	err = msm_drm_register_client(&f2fs_fb_notify_block);
+	if (err) {
+		printk("%s error: register notifier failed,drm!\n", __func__);
+	}
+#elif defined(CONFIG_FB)
+	   err = fb_register_client(&f2fs_fb_notify_block);
+	if (err) {
+		printk("%s error: register notifier failed!\n", __func__);
+	}
+#endif
+	err = power_supply_reg_notifier(&f2fs_battery_notify_block);
+	if (err) {
+		printk("%s error: register notifier failed!\n", __func__);
+	}
+#endif
+
 	return 0;
 
 free_root_stats:
@@ -3201,6 +3478,24 @@ fail:
 
 static void __exit exit_f2fs_fs(void)
 {
+	int err = 0;
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+#if defined(CONFIG_DRM_MSM)
+	err = msm_drm_unregister_client(&f2fs_fb_notify_block);
+	if (err) {
+		printk("%s error: unregister notifier failed,drm!\n", __func__);
+	}
+#elif defined(CONFIG_FB)
+	err = fb_unregister_client(&f2fs_fb_notify_block);
+	if (err) {
+		printk("%s error: unregister notifier failed!\n", __func__);
+	}
+#endif
+
+	power_supply_unreg_notifier(&f2fs_battery_notify_block);
+#endif
+
 	f2fs_destroy_post_read_processing();
 	f2fs_destroy_root_stats();
 	unregister_filesystem(&f2fs_fs_type);

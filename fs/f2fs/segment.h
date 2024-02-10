@@ -602,7 +602,12 @@ static inline int utilization(struct f2fs_sb_info *sbi)
  * F2FS_IPUT_DISABLE - disable IPU. (=default option)
  */
 #define DEF_MIN_IPU_UTIL	70
+#ifndef VENDOR_EDIT
+//Chunyi.Mei@PSW.BSP.FS.f2fs, 2017-10-1, Modify for performance
 #define DEF_MIN_FSYNC_BLOCKS	8
+#else/* VENDOR_EDIT */
+#define DEF_MIN_FSYNC_BLOCKS	20
+#endif /* VENDOR_EDIT */
 #define DEF_MIN_HOT_BLOCKS	16
 
 #define SMALL_VOLUME_SEGMENTS	(16 * 512)	/* 16GB */
@@ -853,9 +858,38 @@ static inline void wake_up_discard_thread(struct f2fs_sb_info *sbi, bool force)
 		}
 	}
 	mutex_unlock(&dcc->cmd_lock);
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	if (!wakeup || !is_idle(sbi))
+#else
 	if (!wakeup)
+#endif
 		return;
 wake_up:
 	dcc->discard_wake = 1;
 	wake_up_interruptible_all(&dcc->discard_wait_queue);
 }
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+static inline void wake_up_odiscard(struct f2fs_sb_info *sbi)
+{
+	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
+
+	//printk("my debug %s %d:wake_up_interruptible_all\n", __func__, __LINE__);
+	dcc->odiscard_wake = 1;
+	sbi->odiscard_already_run = 1;
+	sbi->last_wp_odc_jiffies = jiffies;
+	wake_up_interruptible_all(&dcc->discard_wait_queue);
+}
+
+static inline void wake_up_otrim(struct f2fs_sb_info *sbi)
+{
+	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
+
+	dcc->otrim_wake = 1;
+	wake_up_interruptible_all(&dcc->discard_wait_queue);
+}
+
+#endif
+

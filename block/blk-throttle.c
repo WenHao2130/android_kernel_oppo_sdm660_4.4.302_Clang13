@@ -1414,7 +1414,6 @@ bool blk_throtl_bio(struct request_queue *q, struct blkcg_gq *blkg,
 	bool throttled = false;
 
 	WARN_ON_ONCE(!rcu_read_lock_held());
-
 	/* see throtl_charge_bio() */
 	if ((bio->bi_rw & REQ_THROTTLED) || !tg->has_rules[rw])
 		goto out;

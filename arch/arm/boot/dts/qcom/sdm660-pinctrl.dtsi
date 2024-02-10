@@ -254,6 +254,39 @@
 			};
 		};
 
+		//#ifdef VENDOR_EDIT
+		/* Wanghao@BSP.group 2017-09-20 add for tp int and reset pin*/
+		pmx_ts_int_active {
+			ts_int_active: ts_int_active {
+				mux {
+					pins = "gpio67";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio67";
+					drive-strength = <8>;
+					bias-pull-up;
+				};
+			};
+		};
+
+		pmx_ts_reset_active {
+			ts_reset_active: ts_reset_active {
+				mux {
+					pins = "gpio66";
+					function = "gpio";
+				};
+
+				config {
+					pins = "gpio66";
+					drive-strength = <8>;
+					bias-disable;
+				};
+			};
+		};
+		//#endif
+
 		i2c_2 {
 			i2c_2_active: i2c_2_active {
 				mux {
@@ -1721,6 +1754,87 @@
 				drive-strength = <2>;
 			};
 		};
+
+//Gou shengjun@PSW.MM.Display.LCD.Stability, 2017/11/30,
+//add for lcd gpio config
+		mdss_exits_active: mdss_exits_active {
+			mux {
+				pins = "gpio73";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio73";
+				drive-strength = <2>; /* 2 mA */
+				bias-disable = <0>; /* no pull */
+				input-enable;
+			};
+		};
+
+		mdss_exits_suspend: mdss_exits_suspend {
+			mux {
+				pins = "gpio73";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio73";
+				drive-strength = <2>; /* 2 mA */
+				bias-pull-down; /* pull down */
+				input-enable;
+			};
+		};
+
+		mdss_err_active: mdss_err_active {
+			mux {
+				pins = "gpio56";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio56";
+				drive-strength = <2>; /* 2 mA */
+				bias-pull-down; /* pull down*/
+				input-enable;
+			};
+		};
+
+		mdss_err_suspend: mdss_err_suspend {
+			mux {
+				pins = "gpio56";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio56";
+				drive-strength = <2>; /* 2 mA */
+				bias-pull-down; /* pull down */
+				input-enable;
+			};
+		};
+
+		mdss_poc_1p8_active: mdss_poc_1p8_active {
+			mux {
+				pins = "gpio63";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio63";
+				drive-strength = <2>;
+				bias-pull-up;
+				output-high;
+			};
+		};
+
+		mdss_poc_1p8_suspend: mdss_poc_1p8_suspend {
+			mux {
+				pins = "gpio63";
+				function = "gpio";
+			};
+			config {
+				pins = "gpio63";
+				drive-strength = <2>;
+				bias-disable;
+				output-low;
+			};
+		};
+//#endif /*VENDOR_EDIT*/
 
 		mdss_dp_usbplug_cc_active: mdss_dp_usbplug_cc_active {
 			mux {

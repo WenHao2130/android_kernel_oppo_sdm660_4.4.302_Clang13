@@ -21,6 +21,9 @@
 #include <linux/freezer.h>
 #include <linux/page_owner.h>
 #include "internal.h"
+#ifdef VENDOR_EDIT
+#include <linux/mm.h>
+#endif 
 
 #ifdef CONFIG_COMPACTION
 static inline void count_compact_event(enum vm_event_item item)
@@ -1294,7 +1297,9 @@ static int __compact_finished(struct zone *zone, struct compact_control *cc,
 {
 	unsigned int order;
 	unsigned long watermark;
-
+#ifdef VENDOR_EDIT
+    int flc = 0;
+#endif
 	if (cc->contended || fatal_signal_pending(current))
 		return COMPACT_CONTENDED;
 
@@ -1326,8 +1331,15 @@ static int __compact_finished(struct zone *zone, struct compact_control *cc,
 		return COMPACT_CONTINUE;
 
 	/* Direct compactor: Is a suitable page free? */
+#ifdef VENDOR_EDIT
+    for (flc = 0; flc < FREE_AREA_COUNTS; flc++) {
+#endif
 	for (order = cc->order; order < MAX_ORDER; order++) {
+#ifdef VENDOR_EDIT
+        struct free_area *area = &zone->free_area[flc][order];
+#else
 		struct free_area *area = &zone->free_area[order];
+#endif
 		bool can_steal;
 
 		/* Job done if page is free of the right migratetype */
@@ -1348,7 +1360,9 @@ static int __compact_finished(struct zone *zone, struct compact_control *cc,
 						true, &can_steal) != -1)
 			return COMPACT_PARTIAL;
 	}
-
+#ifdef VENDOR_EDIT
+    }
+#endif
 	return COMPACT_NO_SUITABLE_PAGE;
 }
 

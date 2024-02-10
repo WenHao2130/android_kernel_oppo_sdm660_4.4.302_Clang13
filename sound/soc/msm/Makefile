@@ -1,6 +1,10 @@
 # MSM Machine Support
-
-snd-soc-hostless-pcm-objs := msm-pcm-hostless.o
+#ifndef VENDOR_EDIT
+#Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/12/19, Modify for card register fail
+#snd-soc-hostless-pcm-objs := msm-pcm-hostless.o
+#else /* VENDOR_EDIT */
+snd-soc-hostless-pcm-objs := msm-pcm-hostless.o audio_test_mod.o
+#endif /* VENDOR_EDIT */
 obj-$(CONFIG_SND_SOC_MSM_HOSTLESS_PCM) += snd-soc-hostless-pcm.o
 
 obj-$(CONFIG_SND_SOC_MSM_QDSP6V2_INTF) += qdsp6v2/
@@ -29,6 +33,12 @@ obj-$(CONFIG_SND_SOC_MSM8998) += snd-soc-msm8998.o
 # for SDM660 sound card driver
 snd-soc-sdm660-common-objs := sdm660-common.o
 obj-$(CONFIG_SND_SOC_SDM660_COMMON) += snd-soc-sdm660-common.o
+#ifdef VENDOR_EDIT
+#Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/12/19, Modify for card register fail
+ifdef CONFIG_OPPO_KEVENT_UPLOAD
+obj-y += oppo_mm_audio_kevent.o
+endif
+#endif /* VENDOR_EDIT */
 
 # for SDM660 sound card driver
 snd-soc-int-codec-objs := sdm660-internal.o

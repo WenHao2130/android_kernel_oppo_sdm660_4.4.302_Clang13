@@ -87,6 +87,11 @@ void __init_rwsem(struct rw_semaphore *sem, const char *name,
 	sem->owner = NULL;
 	osq_lock_init(&sem->osq);
 #endif
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    sem->ux_dep_task = NULL;
+#endif
+
 }
 
 EXPORT_SYMBOL(__init_rwsem);
@@ -225,7 +230,16 @@ struct rw_semaphore __sched *rwsem_down_read_failed(struct rw_semaphore *sem)
 	raw_spin_lock_irq(&sem->wait_lock);
 	if (list_empty(&sem->wait_list))
 		adjustment += RWSEM_WAITING_BIAS;
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    if (sysctl_uifirst_enabled) {
+        rwsem_list_add(waiter.task, &waiter.list, &sem->wait_list);
+    } else {
+        list_add_tail(&waiter.list, &sem->wait_list);
+    }
+#else
 	list_add_tail(&waiter.list, &sem->wait_list);
+#endif
 
 	/* we're now waiting on the lock, but no longer actively locking */
 	count = rwsem_atomic_update(adjustment, sem);
@@ -240,6 +254,13 @@ struct rw_semaphore __sched *rwsem_down_read_failed(struct rw_semaphore *sem)
 	     adjustment != -RWSEM_ACTIVE_READ_BIAS))
 		sem = __rwsem_do_wake(sem, RWSEM_WAKE_ANY);
 
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    if (sysctl_uifirst_enabled) {
+        rwsem_dynamic_ux_enqueue(current, waiter.task, READ_ONCE(sem->owner), sem);
+    }
+#endif
+
 	raw_spin_unlock_irq(&sem->wait_lock);
 
 	/* wait to be given the lock */
@@ -247,7 +268,15 @@ struct rw_semaphore __sched *rwsem_down_read_failed(struct rw_semaphore *sem)
 		set_task_state(tsk, TASK_UNINTERRUPTIBLE);
 		if (!waiter.task)
 			break;
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+		// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for stuck monitor
+				current->in_downread = 1;
+#endif
 		schedule();
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+	// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for stuck monitor
+			current->in_downread = 0;
+#endif
 	}
 
 	__set_task_state(tsk, TASK_RUNNING);
@@ -460,7 +489,16 @@ struct rw_semaphore __sched *rwsem_down_write_failed(struct rw_semaphore *sem)
 	if (list_empty(&sem->wait_list))
 		waiting = false;
 
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    if (sysctl_uifirst_enabled) {
+        rwsem_list_add(waiter.task, &waiter.list, &sem->wait_list);
+    } else {
+        list_add_tail(&waiter.list, &sem->wait_list);
+    }
+#else
 	list_add_tail(&waiter.list, &sem->wait_list);
+#endif
 
 	/* we're now waiting on the lock, but no longer actively locking */
 	if (waiting) {
@@ -477,6 +515,13 @@ struct rw_semaphore __sched *rwsem_down_write_failed(struct rw_semaphore *sem)
 	} else
 		count = rwsem_atomic_update(RWSEM_WAITING_BIAS, sem);
 
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    if (sysctl_uifirst_enabled) {
+        rwsem_dynamic_ux_enqueue(waiter.task, current, READ_ONCE(sem->owner), sem);
+    }
+#endif
+
 	/* wait until we successfully acquire the lock */
 	set_current_state(TASK_UNINTERRUPTIBLE);
 	while (true) {
@@ -486,7 +531,15 @@ struct rw_semaphore __sched *rwsem_down_write_failed(struct rw_semaphore *sem)
 
 		/* Block until there are no active lockers. */
 		do {
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+		// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for stuck monitor
+			current->in_downwrite = 1;
+#endif
 			schedule();
+#if defined(VENDOR_EDIT) && defined(CONFIG_OPPO_HEALTHINFO)
+			// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for stuck monitor
+			current->in_downwrite = 0;
+#endif
 			set_current_state(TASK_UNINTERRUPTIBLE);
 		} while ((count = sem->count) & RWSEM_ACTIVE_MASK);
 
@@ -603,6 +656,13 @@ struct rw_semaphore *rwsem_downgrade_wake(struct rw_semaphore *sem)
 	/* do nothing if list empty */
 	if (!list_empty(&sem->wait_list))
 		sem = __rwsem_do_wake(sem, RWSEM_WAKE_READ_OWNED);
+
+#ifdef VENDOR_EDIT
+// Liujie.Xie@TECH.Kernel.Sched, 2019/05/22, add for ui first
+    if (sysctl_uifirst_enabled) {
+        rwsem_dynamic_ux_dequeue(sem, current);
+    }
+#endif
 
 	raw_spin_unlock_irqrestore(&sem->wait_lock, flags);
 

@@ -60,6 +60,15 @@
 #define SPMI_OWNERSHIP_TABLE_REG(N)	(0x0700 + (4 * (N)))
 #define SPMI_OWNERSHIP_PERIPH2OWNER(X)	((X) & 0x7)
 
+#ifdef VENDOR_EDIT
+//Wenxian.Zhen@BSP.Power.Basic, 2016/07/19, add for analysis power consumption
+#define WAKEUP_SOURCE_RTC		453
+#define WAKEUP_SOURCE_KPDPWR	13
+u64 alarm_count = 0;
+u64	wakeup_source_count_rtc = 0;
+u64 wakeup_source_count_kpdpwr = 0;
+#endif //VENDOR_EDIT 
+
 /* Channel Status fields */
 enum pmic_arb_chnl_status {
 	PMIC_ARB_STATUS_DONE	= BIT(0),
@@ -565,6 +574,11 @@ static void periph_interrupt(struct spmi_pmic_arb *pa, u16 apid, bool show)
 
 			pr_warn("spmi_show_resume_irq: %d triggered [0x%01x, 0x%02x, 0x%01x] %s\n",
 				irq, sid, per, id, name);
+#ifdef VENDOR_EDIT
+//Wenxian.Zhen@BSP.Power.Basic, 2016/07/19, add for analysis power consumption
+			if (WAKEUP_SOURCE_KPDPWR == irq)
+				wakeup_source_count_kpdpwr++;
+#endif //VENDOR_EDIT 
 		} else {
 			generic_handle_irq(irq);
 		}

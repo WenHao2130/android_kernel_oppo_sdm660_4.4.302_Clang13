@@ -25,6 +25,14 @@
 #include "gc.h"
 #include "trace.h"
 #include <trace/events/f2fs.h>
+#ifdef CONFIG_F2FS_OPPO_GC
+#include "of2fs_segment.h"
+#endif
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-24, discard for dev gc */
+int f2fs_trim_status = 0;
+#endif
 
 #define __reverse_ffz(x) __reverse_ffs(~(x))
 
@@ -169,6 +177,21 @@ found:
 	return result - size + __reverse_ffz(tmp);
 }
 
+#ifdef CONFIG_F2FS_OPPO_GC
+int find_next_free_extent(const unsigned long *addr,
+                           unsigned long size, unsigned long *offset)
+{
+         unsigned long pos, pos_zero_bit;
+
+         pos_zero_bit = __find_rev_next_zero_bit(addr, size, *offset);
+         if (pos_zero_bit == size)
+                 return -ENOMEM;
+         pos = __find_rev_next_bit(addr, size, pos_zero_bit);
+         *offset = pos;
+         return (int)(pos - pos_zero_bit);
+}
+#endif
+
 bool f2fs_need_SSR(struct f2fs_sb_info *sbi)
 {
 	int node_secs = get_blocktype_secs(sbi, F2FS_DIRTY_NODES);
@@ -183,6 +206,19 @@ bool f2fs_need_SSR(struct f2fs_sb_info *sbi)
 	return free_sections(sbi) <= (node_secs + 2 * dent_secs + imeta_secs +
 			SM_I(sbi)->min_ssr_sections + reserved_sections(sbi));
 }
+
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019/08/19, support interrupt fstrim with SIGINT */
+/*
+ * checking if SIGINT signal is pending, similar to fatal_signal_pending
+ */
+static inline int interrupt_signal_pending(struct task_struct *p)
+{
+	return signal_pending(p) &&
+		unlikely(sigismember(&p->pending.signal, SIGINT));
+}
+#endif
+
 
 void f2fs_register_inmem_page(struct inode *inode, struct page *page)
 {
@@ -479,10 +515,14 @@ void f2fs_balance_fs(struct f2fs_sb_info *sbi, bool need)
 	 * We should do GC or end up with checkpoint, if there are so many dirty
 	 * dir/node pages without enough free segments.
 	 */
+#ifdef CONFIG_F2FS_OPPO_GC
+	of2fs_balance_fs(sbi);
+#else
 	if (has_not_enough_free_secs(sbi, 0, 0)) {
 		mutex_lock(&sbi->gc_mutex);
 		f2fs_gc(sbi, false, false, NULL_SEGNO);
 	}
+#endif
 }
 
 void f2fs_balance_fs_bg(struct f2fs_sb_info *sbi)
@@ -818,6 +858,10 @@ static struct discard_cmd *__create_discard_cmd(struct f2fs_sb_info *sbi,
 	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
 	struct list_head *pend_list;
 	struct discard_cmd *dc;
+	block_t user_block_count = sbi->user_block_count;
+	block_t ovp_count = SM_I(sbi)->ovp_segments << sbi->log_blocks_per_seg;
+	block_t fs_available_blocks = user_block_count -
+				valid_user_blocks(sbi) + ovp_count;
 
 	f2fs_bug_on(sbi, !len);
 
@@ -832,10 +876,17 @@ static struct discard_cmd *__create_discard_cmd(struct f2fs_sb_info *sbi,
 	dc->ref = 0;
 	dc->state = D_PREP;
 	dc->error = 0;
+#ifdef CONFIG_F2FS_BD_STAT
+	dc->discard_time = 0;
+#endif
 	init_completion(&dc->wait);
 	list_add_tail(&dc->list, pend_list);
 	atomic_inc(&dcc->discard_cmd_cnt);
 	dcc->undiscard_blks += len;
+
+	if (dcc->undiscard_blks > (fs_available_blocks * DEVICE_FREE_SPACE_PERCENT / 100)) {
+		wake_up_odiscard(sbi);
+	}
 
 	return dc;
 }
@@ -879,14 +930,25 @@ static void __remove_discard_cmd(struct f2fs_sb_info *sbi,
 	trace_f2fs_remove_discard(dc->bdev, dc->start, dc->len);
 
 	f2fs_bug_on(sbi, dc->ref);
+#ifdef CONFIG_F2FS_BD_STAT
+	if (dc->state == D_DONE && !dc->error && dc->discard_time) {
+		bd_lock(sbi);
+		bd_inc_val(sbi, discard_blocks, dc->len);
+		bd_inc_val(sbi, discard_count, 1);
+		bd_inc_val(sbi, discard_time, dc->discard_time);
+		bd_max_val(sbi, max_discard_time, dc->discard_time);
+		bd_unlock(sbi);
+	}
+#endif
+
 
 	if (dc->error == -EOPNOTSUPP)
 		dc->error = 0;
 
 	if (dc->error)
-		f2fs_msg(sbi->sb, KERN_INFO,
-			"Issue discard(%u, %u, %u) failed, ret: %d",
-			dc->lstart, dc->start, dc->len, dc->error);
+		printk_ratelimited(
+			"%sF2FS-fs: Issue discard(%u, %u, %u) failed, ret: %d",
+			KERN_INFO, dc->lstart, dc->start, dc->len, dc->error);
 	__detach_discard_cmd(dcc, dc);
 }
 
@@ -896,6 +958,15 @@ static void f2fs_submit_discard_endio(struct bio *bio)
 
 	dc->error = bio->bi_error;
 	dc->state = D_DONE;
+#ifdef CONFIG_F2FS_BD_STAT
+	if (dc->discard_time) {
+		u64 discard_end_time = (u64)ktime_get().tv64;
+		if (discard_end_time > dc->discard_time)
+			dc->discard_time = discard_end_time - dc->discard_time;
+		else
+			dc->discard_time = 0;
+	}
+#endif
 	complete_all(&dc->wait);
 	bio_put(bio);
 }
@@ -1019,9 +1090,23 @@ static void __init_discard_policy(struct f2fs_sb_info *sbi,
 
 	dpolicy->max_requests = DEF_MAX_DISCARD_REQUEST;
 	dpolicy->io_aware_gran = MAX_PLIST_NUM;
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-25, discard timeout for put_super*/
+	dpolicy->timeout = 0;
+#endif
 
 	if (discard_type == DPOLICY_BG) {
+#ifdef VENDOR_EDIT
+		/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		if (gc_dc_opt) {
+			dpolicy->min_interval = DEF_MIN_DISCARD_ISSUE_TIME;
+		} else {
+			dpolicy->min_interval = 50;/* will remove */
+		}
+		dpolicy->mid_interval = DEF_MID_DISCARD_ISSUE_TIME;
+#else
 		dpolicy->min_interval = DEF_MIN_DISCARD_ISSUE_TIME;
+#endif
 		dpolicy->mid_interval = DEF_MID_DISCARD_ISSUE_TIME;
 		dpolicy->max_interval = DEF_MAX_DISCARD_ISSUE_TIME;
 		dpolicy->io_aware = true;
@@ -1031,11 +1116,29 @@ static void __init_discard_policy(struct f2fs_sb_info *sbi,
 			dpolicy->max_interval = DEF_MIN_DISCARD_ISSUE_TIME;
 		}
 	} else if (discard_type == DPOLICY_FORCE) {
+#ifdef VENDOR_EDIT
+		/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		dpolicy->min_interval = DEF_URGENT_DISCARD_ISSUE_TIME;
+#else
 		dpolicy->min_interval = DEF_MIN_DISCARD_ISSUE_TIME;
+#endif
 		dpolicy->mid_interval = DEF_MID_DISCARD_ISSUE_TIME;
 		dpolicy->max_interval = DEF_MAX_DISCARD_ISSUE_TIME;
 		dpolicy->io_aware = false;
+#ifdef VENDOR_EDIT
+		/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	} else if (discard_type == DPOLICY_ODISCARD) {
+		dpolicy->granularity = 1;
+		dpolicy->min_interval = 0;
+		dpolicy->mid_interval = 500;
+		dpolicy->max_interval = DEF_DISCARD_EMPTY_ISSUE_TIME;
+		dpolicy->io_aware = true;
+#endif
 	} else if (discard_type == DPOLICY_FSTRIM) {
+		dpolicy->granularity = 1;
+		dpolicy->min_interval = 0;
+		dpolicy->mid_interval = 0;
+		dpolicy->max_interval = DEF_DISCARD_EMPTY_ISSUE_TIME;
 		dpolicy->io_aware = false;
 	} else if (discard_type == DPOLICY_UMOUNT) {
 		dpolicy->max_requests = UINT_MAX;
@@ -1070,6 +1173,9 @@ static void __submit_discard_cmd(struct f2fs_sb_info *sbi,
 	if (!dc->error) {
 		/* should keep before submission to avoid D_DONE right away */
 		dc->state = D_SUBMIT;
+#ifdef CONFIG_F2FS_BD_STAT
+		dc->discard_time = (u64)ktime_get().tv64;
+#endif
 		atomic_inc(&dcc->issued_discard);
 		atomic_inc(&dcc->issing_discard);
 		if (bio) {
@@ -1261,8 +1367,14 @@ static int __queue_discard_cmd(struct f2fs_sb_info *sbi,
 	return 0;
 }
 
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+static int __issue_discard_cmd(struct f2fs_sb_info *sbi,
+					struct discard_policy *dpolicy, int *io_busy)
+#else
 static int __issue_discard_cmd(struct f2fs_sb_info *sbi,
 					struct discard_policy *dpolicy)
+#endif
 {
 	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
 	struct list_head *pend_list;
@@ -1270,24 +1382,64 @@ static int __issue_discard_cmd(struct f2fs_sb_info *sbi,
 	struct blk_plug plug;
 	int i, iter = 0, issued = 0;
 	bool io_interrupted = false;
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-25, discard timeout for put_super*/
+	if (dpolicy->timeout != 0)
+		f2fs_update_time(sbi, dpolicy->timeout);
+#endif
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	if (io_busy) {
+		*io_busy = false;
+	}
+#endif
+
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	blk_start_plug(&plug);
+#endif
+
 
 	for (i = MAX_PLIST_NUM - 1; i >= 0; i--) {
+#ifdef VENDOR_EDIT
+		/*shifei.ge@TECH.Storage.FS, 2019-09-25, discard timeout for put_super*/
+		if (dpolicy->timeout != 0 &&
+				f2fs_time_over(sbi, dpolicy->timeout))
+			break;
+#endif
 		if (i + 1 < dpolicy->granularity)
 			break;
 		pend_list = &dcc->pend_list[i];
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		if (list_empty(pend_list))
+			continue;
+#endif
 
 		mutex_lock(&dcc->cmd_lock);
 		if (list_empty(pend_list))
 			goto next;
 		f2fs_bug_on(sbi,
 			!f2fs_check_rb_tree_consistence(sbi, &dcc->root));
+#ifndef VENDOR_EDIT
+		/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
 		blk_start_plug(&plug);
+#endif
+
 		list_for_each_entry_safe(dc, tmp, pend_list, list) {
 			f2fs_bug_on(sbi, dc->state != D_PREP);
 
 			if (dpolicy->io_aware && i < dpolicy->io_aware_gran &&
 								!is_idle(sbi)) {
 				io_interrupted = true;
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+				if (io_busy) {
+					*io_busy = true;
+				}
+#endif
 				goto skip;
 			}
 
@@ -1297,13 +1449,20 @@ skip:
 			if (++iter >= dpolicy->max_requests)
 				break;
 		}
+#ifndef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
 		blk_finish_plug(&plug);
+#endif
 next:
 		mutex_unlock(&dcc->cmd_lock);
 
 		if (iter >= dpolicy->max_requests)
 			break;
 	}
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	blk_finish_plug(&plug);
+#endif
 
 	if (!issued && io_interrupted)
 		issued = -1;
@@ -1453,7 +1612,7 @@ void f2fs_stop_discard_thread(struct f2fs_sb_info *sbi)
 }
 
 /* This comes from f2fs_put_super */
-bool f2fs_wait_discard_bios(struct f2fs_sb_info *sbi)
+bool f2fs_issue_discard_timeout(struct f2fs_sb_info *sbi)
 {
 	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
 	struct discard_policy dpolicy;
@@ -1461,13 +1620,58 @@ bool f2fs_wait_discard_bios(struct f2fs_sb_info *sbi)
 
 	__init_discard_policy(sbi, &dpolicy, DPOLICY_UMOUNT,
 					dcc->discard_granularity);
+
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-25, discard timeout for put_super*/
+		dpolicy.timeout = UMOUNT_DISCARD_TIMEOUT;
+#endif
+#ifdef VENDOR_EDIT
+
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	__issue_discard_cmd(sbi, &dpolicy, NULL);
+#else
 	__issue_discard_cmd(sbi, &dpolicy);
+#endif
 	dropped = __drop_discard_cmd(sbi);
 
 	/* just to make sure there is no pending discard commands */
 	__wait_all_discard_cmd(sbi, NULL);
 	return dropped;
 }
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+static int select_discard_type(struct f2fs_sb_info *sbi, int expect_odiscard_type)
+{
+	struct discard_cmd_control *dcc = SM_I(sbi)->dcc_info;
+	block_t user_block_count = sbi->user_block_count;
+	block_t ovp_count = SM_I(sbi)->ovp_segments << sbi->log_blocks_per_seg;
+	block_t fs_available_blocks = user_block_count -
+				valid_user_blocks(sbi) + ovp_count;
+
+	if (DPOLICY_ODISCARD == expect_odiscard_type) {
+		if (f2fs_device.battery_charging
+			|| (true == f2fs_device.screen_off
+				&& f2fs_device.battery_percent >= BATTERY_THRESHOLD)) {
+			return DPOLICY_ODISCARD;
+		}
+	}
+	if (DPOLICY_FSTRIM == expect_odiscard_type) {
+		if (f2fs_device.battery_charging
+			&& true == f2fs_device.screen_off) {
+			return DPOLICY_FSTRIM;
+		}
+	}
+	if (fs_available_blocks < fs_free_space_threshold(sbi) &&
+				fs_available_blocks - dcc->undiscard_blks <
+				device_free_space_threshold(sbi)) {
+		return DPOLICY_FORCE;
+	}
+
+	return DPOLICY_BG;
+}
+#endif
+
+
 
 static int issue_discard_thread(void *data)
 {
@@ -1477,11 +1681,99 @@ static int issue_discard_thread(void *data)
 	struct discard_policy dpolicy;
 	unsigned int wait_ms = DEF_MIN_DISCARD_ISSUE_TIME;
 	int issued;
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+	int discard_type = DPOLICY_BG;
+	int io_busy = false;
+	int expect_odiscard_type = MAX_DPOLICY;
+	unsigned long odiscard_expire = 0;
+	int discard_cmd_cnt = 0;
+#endif
 
 	set_freezable();
 
 	do {
-		__init_discard_policy(sbi, &dpolicy, DPOLICY_BG,
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		if ( gc_dc_opt ) {
+
+			wait_event_interruptible_timeout(*q,
+					kthread_should_stop() || freezing(current) ||
+					dcc->discard_wake || dcc->odiscard_wake || dcc->otrim_wake,
+					msecs_to_jiffies(wait_ms));
+
+			if (dcc->discard_wake) {
+				expect_odiscard_type = MAX_DPOLICY;
+			}
+
+			if (dcc->odiscard_wake) {
+				odiscard_expire = jiffies + msecs_to_jiffies(ODISCARD_EXEC_TIME_NO_CHARGING);
+				expect_odiscard_type = DPOLICY_ODISCARD;
+			}
+
+			if (dcc->otrim_wake) {
+				expect_odiscard_type = DPOLICY_FSTRIM;
+				discard_cmd_cnt = atomic_read(&dcc->discard_cmd_cnt);
+			}
+
+			dcc->discard_wake = 0;
+			dcc->odiscard_wake = 0;
+			dcc->otrim_wake = 0;
+
+			if (try_to_freeze())
+				continue;
+			if (f2fs_readonly(sbi->sb))
+				continue;
+			if (kthread_should_stop())
+				return 0;
+
+			if ( DPOLICY_ODISCARD == expect_odiscard_type ) {
+				/* limit odiscard exec 8 s */
+				if (!f2fs_device.battery_charging && time_after(jiffies, odiscard_expire)) {
+					wait_ms = DEF_MAX_DISCARD_ISSUE_TIME;
+					continue;
+				}
+			}
+
+			discard_type = select_discard_type(sbi, expect_odiscard_type);
+			if (DPOLICY_FSTRIM == expect_odiscard_type && DPOLICY_FSTRIM != discard_type) {
+				f2fs_trim_status = F2FS_TRIM_INTERRUPT;
+			}
+
+			if (sbi->gc_mode == GC_URGENT) {
+				__init_discard_policy(sbi, &dpolicy, DPOLICY_FORCE, 1);
+				discard_type = DPOLICY_FORCE;
+			} else {
+				__init_discard_policy(sbi, &dpolicy, discard_type,
+						dcc->discard_granularity);
+			}
+
+			sb_start_intwrite(sbi->sb);
+
+			issued = __issue_discard_cmd(sbi, &dpolicy, &io_busy);
+			if (issued) {
+				__wait_all_discard_cmd(sbi, &dpolicy);
+				if (io_busy) {
+					wait_ms = dpolicy.mid_interval;
+				} else {
+					wait_ms = dpolicy.min_interval;
+				}
+			} else {
+				wait_ms = dpolicy.max_interval;
+			}
+			if (DPOLICY_FSTRIM == discard_type) {
+				discard_cmd_cnt -= issued;
+				if (discard_cmd_cnt <= 0 || 0 == issued) {
+					expect_odiscard_type = MAX_DPOLICY;
+					wait_ms = dpolicy.max_interval;
+					f2fs_trim_status = F2FS_TRIM_FINISH;
+				}
+			}
+
+			sb_end_intwrite(sbi->sb);
+		} else {
+#endif
+			__init_discard_policy(sbi, &dpolicy, DPOLICY_BG,
 					dcc->discard_granularity);
 
 		wait_event_interruptible_timeout(*q,
@@ -1508,7 +1800,13 @@ static int issue_discard_thread(void *data)
 
 		sb_start_intwrite(sbi->sb);
 
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		issued = __issue_discard_cmd(sbi, &dpolicy, NULL);
+#else
 		issued = __issue_discard_cmd(sbi, &dpolicy);
+#endif
+
 		if (issued > 0) {
 			__wait_all_discard_cmd(sbi, &dpolicy);
 			wait_ms = dpolicy.min_interval;
@@ -1519,6 +1817,10 @@ static int issue_discard_thread(void *data)
 		}
 
 		sb_end_intwrite(sbi->sb);
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01, add for oDiscard */
+		}
+#endif
 
 	} while (!kthread_should_stop());
 	return 0;
@@ -2549,23 +2851,38 @@ int f2fs_trim_fs(struct f2fs_sb_info *sbi, struct fstrim_range *range)
 	if (err)
 		goto out;
 
-	start_block = START_BLOCK(sbi, start_segno);
-	end_block = START_BLOCK(sbi, end_segno + 1);
-
-	__init_discard_policy(sbi, &dpolicy, DPOLICY_FSTRIM, cpc.trim_minlen);
-	__issue_discard_cmd_range(sbi, &dpolicy, start_block, end_block);
-
+#ifdef VENDOR_EDIT
+/*shifei.ge@TECH.Storage.FS, 2019-09-01,add for oTrim */
 	/*
 	 * We filed discard candidates, but actually we don't need to wait for
 	 * all of them, since they'll be issued in idle time along with runtime
 	 * discard option. User configuration looks like using runtime discard
 	 * or periodic fstrim instead of it.
 	 */
-	if (!test_opt(sbi, DISCARD)) {
+	if (f2fs_realtime_discard_enable(sbi)) {
+		f2fs_trim_status = F2FS_TRIM_START;
+		wake_up_otrim(sbi);
+		goto out;
+	}
+#endif
+
+	start_block = START_BLOCK(sbi, start_segno);
+	end_block = START_BLOCK(sbi, end_segno + 1);
+
+	__init_discard_policy(sbi, &dpolicy, DPOLICY_FSTRIM, cpc.trim_minlen);
+	__issue_discard_cmd_range(sbi, &dpolicy, start_block, end_block);
+
+#ifdef VENDOR_EDIT
+		/*shifei.ge@TECH.Storage.FS, 2019-08-9,remove 'if', fix bug:trim lead to dcc_info->issing_discard error */
+		//if (!test_opt(sbi, DISCARD)) {
+#endif
 		trimmed = __wait_discard_cmd_range(sbi, &dpolicy,
 					start_block, end_block);
 		range->len = F2FS_BLK_TO_BYTES(trimmed);
-	}
+#ifdef VENDOR_EDIT
+	/*shifei.ge@TECH.Storage.FS, 2019-08-9, fix bug:trim lead to dcc_info->issing_discard error */
+	//}
+#endif
 out:
 	return err;
 }
@@ -2786,6 +3103,18 @@ void f2fs_allocate_data_block(struct f2fs_sb_info *sbi, struct page *page,
 	__refresh_next_blkoff(sbi, curseg);
 
 	stat_inc_block_count(sbi, curseg);
+#ifdef CONFIG_F2FS_BD_STAT
+	bd_lock(sbi);
+	if (type >= CURSEG_HOT_DATA && type <= CURSEG_COLD_DATA) {
+		bd_inc_array_val(sbi, data_alloc_count, curseg->alloc_type, 1);
+		bd_inc_val(sbi, curr_data_alloc_count, 1);
+	} else if (type >= CURSEG_HOT_NODE && type <= CURSEG_COLD_NODE) {
+		bd_inc_array_val(sbi, node_alloc_count, curseg->alloc_type, 1);
+		bd_inc_val(sbi, curr_node_alloc_count, 1);
+	}
+	bd_inc_array_val(sbi, hotcold_count, type + 1, 1UL);
+	bd_unlock(sbi);
+#endif
 
 	/*
 	 * SIT information should be updated before segment allocation,
@@ -2900,6 +3229,19 @@ void f2fs_do_write_meta_page(struct f2fs_sb_info *sbi, struct page *page,
 	f2fs_submit_page_write(&fio);
 
 	f2fs_update_iostat(sbi, io_type, F2FS_BLKSIZE);
+#ifdef CONFIG_F2FS_BD_STAT
+	bd_lock(sbi);
+	if (fio.new_blkaddr >= le32_to_cpu(F2FS_RAW_SUPER(sbi)->cp_blkaddr) &&
+	    (fio.new_blkaddr < le32_to_cpu(F2FS_RAW_SUPER(sbi)->sit_blkaddr)))
+		bd_inc_array_val(sbi, hotcold_count, HC_META_CP, 1);
+	else if (fio.new_blkaddr < le32_to_cpu(F2FS_RAW_SUPER(sbi)->nat_blkaddr))
+		bd_inc_array_val(sbi, hotcold_count, HC_META_SIT, 1);
+	else if (fio.new_blkaddr < le32_to_cpu(F2FS_RAW_SUPER(sbi)->ssa_blkaddr))
+		bd_inc_array_val(sbi, hotcold_count, HC_META_NAT, 1);
+	else if (fio.new_blkaddr < le32_to_cpu(F2FS_RAW_SUPER(sbi)->main_blkaddr))
+		bd_inc_array_val(sbi, hotcold_count, HC_META_SSA, 1);
+	bd_unlock(sbi);
+#endif
 }
 
 void f2fs_do_write_node_page(unsigned int nid, struct f2fs_io_info *fio)
@@ -2941,6 +3283,11 @@ int f2fs_inplace_write_data(struct f2fs_io_info *fio)
 			GET_SEGNO(sbi, fio->new_blkaddr))->type));
 
 	stat_inc_inplace_blocks(fio->sbi);
+#ifdef CONFIG_F2FS_BD_STAT
+	bd_lock(sbi);
+	bd_inc_val(sbi, data_ipu_count, 1);
+	bd_unlock(sbi);
+#endif
 
 	err = f2fs_submit_page_bio(fio);
 	if (!err)

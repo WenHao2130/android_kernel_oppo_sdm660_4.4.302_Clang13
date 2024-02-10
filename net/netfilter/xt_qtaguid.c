@@ -12,7 +12,7 @@
  * There are run-time debug flags enabled via the debug_mask module param, or
  * via the DEFAULT_DEBUG_MASK. See xt_qtaguid_internal.h.
  */
-#define DEBUG
+//#define DEBUG
 
 #include <linux/file.h>
 #include <linux/inetdevice.h>
@@ -28,6 +28,13 @@
 #include <net/sock.h>
 #include <net/tcp.h>
 #include <net/udp.h>
+
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/09/28, add for lost packages
+#include <linux/hash.h>
+#include <linux/icmp.h>
+#include <linux/jiffies.h>
+#endif /* VENDOR_EDIT */
 
 #if defined(CONFIG_IP6_NF_IPTABLES) || defined(CONFIG_IP6_NF_IPTABLES_MODULE)
 #include <linux/netfilter_ipv6/ip6_tables.h>
@@ -45,6 +52,15 @@
 #define XT_SOCKET_SUPPORTED_HOOKS \
 	((1 << NF_INET_PRE_ROUTING) | (1 << NF_INET_LOCAL_IN))
 
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+#define MAX_UID 10000
+static DEFINE_SPINLOCK(pid_stat_tree_lock);
+static struct proc_dir_entry *xt_qtaguid_stats_pid_file;
+static int qtagpid_reset_stats(void);
+static int qtagpid_set_split_uid_list(const char *input);
+static LIST_HEAD(split_uid_list);
+#endif /* VENDOR_EDIT */
 
 static const char *module_procdirname = "xt_qtaguid";
 static struct proc_dir_entry *xt_qtaguid_procdir;
@@ -412,6 +428,15 @@ static struct uid_tag_data *uid_tag_data_tree_search(struct rb_root *root,
 	return NULL;
 }
 
+#ifdef VENDOR_EDIT
+//Yunqing.Zeng@BSP.Power.Basic 2018/01/11 add for backup of netstat before sleep
+struct proc_dir_entry * get_xt_qtaguid_procdir(void)
+{
+	return xt_qtaguid_procdir;
+}
+EXPORT_SYMBOL(get_xt_qtaguid_procdir);
+#endif /* VENDOR_EDIT */
+
 /*
  * Allocates a new uid_tag_data struct if needed.
  * Returns a pointer to the found or allocated uid_tag_data.
@@ -657,6 +682,11 @@ done:
 	return iface_entry;
 }
 
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/09/28, Add for lost packages
+#include "xt_qtaguid_lost.c"
+#endif /* VENDOR_EDIT */
+
 /* This is for fmt2 only */
 static void pp_iface_stat_header(struct seq_file *m)
 {
@@ -868,6 +898,18 @@ static struct iface_stat *iface_alloc(struct net_device *net_dev)
 	}
 	spin_lock_init(&new_iface->tag_stat_list_lock);
 	new_iface->tag_stat_tree = RB_ROOT;
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	INIT_LIST_HEAD(&new_iface->pid_stat_list);
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/09/28, Add for lost packages
+	new_iface->ipv4_lost_stat_tree = RB_ROOT;
+	new_iface->ipv6_lost_stat_tree = RB_ROOT;
+	spin_lock_init(&new_iface->lost_stat_tree_lock);
+	new_iface->ip4_sock_info_tree = RB_ROOT;
+	spin_lock_init(&new_iface->sock_info_tree_lock);
+#endif /* VENDOR_EDIT */
 	_iface_stat_set_active(new_iface, net_dev, true);
 
 	/*
@@ -1239,10 +1281,29 @@ static void iface_stat_update_from_skb(const struct sk_buff *skb,
 	spin_unlock_bh(&iface_stat_list_lock);
 }
 
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+#include "xt_qtaguid_pid_stat_update.c"
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
 static void tag_stat_update(struct tag_stat *tag_entry,
-			enum ifs_tx_rx direction, int proto, int bytes)
+            enum ifs_tx_rx direction, int proto, int bytes,
+            char *task_comm, pid_t task_pid)
+#else /* VENDOR_EDIT */
+static void tag_stat_update(struct tag_stat *tag_entry,
+            enum ifs_tx_rx direction, int proto, int bytes)
+#endif /* VENDOR_EDIT */
 {
 	int active_set;
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	struct split_uid *u;
+	uid_t uid_from_tag;
+#endif /* VENDOR_EDIT */
+
 	active_set = get_active_counter_set(tag_entry->tn.tag);
 	MT_DEBUG("qtaguid: tag_stat_update(tag=0x%llx (uid=%u) set=%d "
 		 "dir=%d proto=%d bytes=%d)\n",
@@ -1253,6 +1314,23 @@ static void tag_stat_update(struct tag_stat *tag_entry,
 	if (tag_entry->parent_counters)
 		data_counters_update(tag_entry->parent_counters, active_set,
 				     direction, proto, bytes);
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	uid_from_tag = get_uid_from_tag(tag_entry->tn.tag);
+
+	if (uid_from_tag <= MAX_UID) {
+		//Android OS:
+		pid_stat_update(tag_entry, active_set, direction, proto, bytes, task_comm, task_pid);
+	} else {
+		//App with share uid:
+		list_for_each_entry(u, &split_uid_list, list) {
+			if (uid_from_tag == u->uid) {
+				//printk("tag_stat_update found match uid:%d\n", uid_from_tag);
+				pid_stat_update(tag_entry, active_set, direction, proto, bytes, task_comm, task_pid);
+			}
+		}
+	}
+#endif /* VENDOR_EDIT */
 }
 
 /*
@@ -1273,14 +1351,29 @@ static struct tag_stat *create_if_tag_stat(struct iface_stat *iface_entry,
 		goto done;
 	}
 	new_tag_stat_entry->tn.tag = tag;
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	new_tag_stat_entry->pid_stat_tree = RB_ROOT;
+	new_tag_stat_entry->iface_stat = iface_entry;
+	spin_lock_init(&new_tag_stat_entry->pid_stat_list_lock);
+#endif /* VENDOR_EDIT */
 	tag_stat_tree_insert(new_tag_stat_entry, &iface_entry->tag_stat_tree);
 done:
 	return new_tag_stat_entry;
 }
 
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
+static void if_tag_stat_update(const char *ifname, uid_t uid,
+			       const struct sock *sk, enum ifs_tx_rx direction,
+			       int proto, int bytes,
+			       char *task_comm, pid_t task_pid)
+#else /* VENDOR_EDIT */
 static void if_tag_stat_update(const char *ifname, uid_t uid,
 			       const struct sock *sk, enum ifs_tx_rx direction,
 			       int proto, int bytes)
+#endif /* VENDOR_EDIT */
 {
 	struct tag_stat *tag_stat_entry;
 	tag_t tag, acct_tag;
@@ -1333,7 +1426,13 @@ static void if_tag_stat_update(const char *ifname, uid_t uid,
 		 * Updating the {acct_tag, uid_tag} entry handles both stats:
 		 * {0, uid_tag} will also get updated.
 		 */
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
+        tag_stat_update(tag_stat_entry, direction, proto, bytes, task_comm, task_pid);
+#else /* VENDOR_EDIT */
 		tag_stat_update(tag_stat_entry, direction, proto, bytes);
+#endif /* VENDOR_EDIT */
 		goto unlock;
 	}
 
@@ -1371,7 +1470,13 @@ static void if_tag_stat_update(const char *ifname, uid_t uid,
 		 */
 		BUG_ON(!new_tag_stat);
 	}
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
+	tag_stat_update(new_tag_stat, direction, proto, bytes, task_comm, task_pid);
+#else /* VENDOR_EDIT */
 	tag_stat_update(new_tag_stat, direction, proto, bytes);
+#endif /* VENDOR_EDIT */
 unlock:
 	spin_unlock_bh(&iface_entry->tag_stat_list_lock);
 	spin_unlock_bh(&iface_stat_list_lock);
@@ -1574,8 +1679,16 @@ err:
 	return err;
 }
 
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count TCP_TIME_WAIT state to corresponding process
+static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
+				    struct xt_action_param *par, int *tcp_time_waited, uid_t *lost_uid)
+
+#else
 static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 				    struct xt_action_param *par)
+#endif /* VENDOR_EDIT */
 {
 	struct sock *sk;
 	unsigned int hook_mask = (1 << par->hooknum);
@@ -1601,6 +1714,14 @@ static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 		return NULL;
 	}
 
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count TCP_TIME_WAIT state to corresponding process
+	if (sk == NULL) {
+		*lost_uid = search_sock_info(skb, par);
+	}
+#endif /* VENDOR_EDIT */
+
 	if (sk) {
 		MT_DEBUG("qtaguid[%d]: %p->sk_proto=%u->sk_state=%d\n",
 			 par->hooknum, sk, sk->sk_protocol, sk->sk_state);
@@ -1609,16 +1730,31 @@ static struct sock *qtaguid_find_sk(const struct sk_buff *skb,
 		 * "struct inet_timewait_sock" which is missing fields.
 		 */
 		if (!sk_fullsock(sk) || sk->sk_state  == TCP_TIME_WAIT) {
+#ifndef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count TCP_TIME_WAIT state to corresponding process
 			sock_gen_put(sk);
 			sk = NULL;
+#else
+			*tcp_time_waited = 1;
+#endif /* VENDOR_EDIT */
 		}
 	}
 	return sk;
 }
 
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
+static void account_for_uid(const struct sk_buff *skb,
+            const struct sock *alternate_sk, uid_t uid,
+            struct xt_action_param *par,
+            char *task_comm, pid_t task_pid)
+#else /* VENDOR_EDIT */
 static void account_for_uid(const struct sk_buff *skb,
 			    const struct sock *alternate_sk, uid_t uid,
 			    struct xt_action_param *par)
+#endif /* VENDOR_EDIT */
 {
 	const struct net_device *el_dev;
 	enum ifs_tx_rx direction;
@@ -1633,7 +1769,8 @@ static void account_for_uid(const struct sk_buff *skb,
 	if_tag_stat_update(el_dev->name, uid,
 			   skb->sk ? skb->sk : alternate_sk,
 			   direction,
-			   proto, skb->len);
+			   proto, skb->len,
+			   task_comm, task_pid);
 }
 
 static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
@@ -1644,6 +1781,13 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	struct sock *sk;
 	kuid_t sock_uid;
 	bool res;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count TCP_TIME_WAIT state to corresponding process
+	struct inet_timewait_sock *tw;
+	int tcp_time_waited = 0;
+	uid_t lost_uid = 0;
+#endif /* VENDOR_EDIT */
 	bool set_sk_callback_lock = false;
 	/*
 	 * TODO: unhack how to force just accounting.
@@ -1684,14 +1828,58 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 	 * "struct inet_timewait_sock" which is missing fields.
 	 * So we ignore it.
 	 */
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count TCP_TIME_WAIT state to corresponding process
+	if (sk && sk->sk_state == TCP_TIME_WAIT) {
+		tw = inet_twsk(sk);
+		if (tw->tw_uid) {
+			if (do_tag_stat) {
+				account_for_uid(skb, sk, tw->tw_uid,
+					par, tw->tw_cmdline, 0);
+			}
+			insert_sock_info(skb, par, tw->tw_uid, tw->tw_cmdline);
+			res = (info->match ^ info->invert) == 0;
+			goto ret_res;
+		}
+		sk = NULL;
+	}
+#else
 	if (sk && sk->sk_state == TCP_TIME_WAIT)
 		sk = NULL;
+#endif /* VENDOR_EDIT */
 	if (sk == NULL) {
 		/*
 		 * A missing sk->sk_socket happens when packets are in-flight
 		 * and the matching socket is already closed and gone.
 		 */
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count TCP_TIME_WAIT state to corresponding process
+		sk = qtaguid_find_sk(skb, par, &tcp_time_waited, &lost_uid);
+		if (tcp_time_waited) {
+			tw = inet_twsk(sk);
+			if (tw->tw_uid) {
+				if (do_tag_stat) {
+					account_for_uid(skb, sk, tw->tw_uid, par, tw->tw_cmdline, 0);
+				}
+				insert_sock_info(skb, par, tw->tw_uid, tw->tw_cmdline);
+				got_sock = sk;
+				res = (info->match ^ info->invert) == 0;
+				goto put_sock_ret_res;
+			}
+			sock_gen_put(sk);
+			sk = NULL;
+		}
+		if (lost_uid) {
+			if (do_tag_stat)
+				account_for_uid(skb, sk, lost_uid, par, NULL, 0);
+			res = (info->match ^ info->invert) == 0;
+			goto put_sock_ret_res;
+		}
+#else
 		sk = qtaguid_find_sk(skb, par);
+#endif /* VENDOR_EDIT */
 		/*
 		 * If we got the socket from the find_sk(), we will need to put
 		 * it back, as nf_tproxy_get_sock_v4() got it.
@@ -1713,8 +1901,39 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		 * couldn't find the owner, so for now we just count them
 		 * against the system.
 		 */
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count no socket package to corresponding process
+		if (sk && sk->sk_socket == NULL) {
+			if (sk->skc_uid) {
+				if (do_tag_stat) {
+					account_for_uid(skb, sk, sk->skc_uid, par, sk->sk_cmdline, 0);
+				}
+				insert_sock_info(skb, par, sk->skc_uid, sk->sk_cmdline);
+				res = (info->match ^ info->invert) == 0;
+				goto put_sock_ret_res;
+			}
+			lost_uid = search_sock_info(skb, par);
+			if (lost_uid) {
+				if (do_tag_stat) {
+					account_for_uid(skb, sk, sk->skc_uid, par, sk->sk_cmdline, 0);
+				}
+				res = (info->match ^ info->invert) == 0;
+				goto put_sock_ret_res;
+			}
+		}
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
+		if (do_tag_stat) {
+			account_for_uid(skb, sk, 0, par, "LostOwner", 0);
+			analysis_lostowner_package(skb, par, "LostOwner");
+		}
+#else /* VENDOR_EDIT */
 		if (do_tag_stat)
 			account_for_uid(skb, sk, 0, par);
+#endif /* VENDOR_EDIT */
 		MT_DEBUG("qtaguid[%d]: leaving (sk=NULL)\n", par->hooknum);
 		res = (info->match ^ info->invert) == 0;
 		atomic64_inc(&qtu_events.match_no_sk);
@@ -1724,9 +1943,20 @@ static bool qtaguid_mt(const struct sk_buff *skb, struct xt_action_param *par)
 		goto put_sock_ret_res;
 	}
 	sock_uid = sk->sk_uid;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/10/28,
+//Add for count normal packages with [uid, (ip port protocol)]
+	insert_sock_info(skb, par, from_kuid(&init_user_ns, sock_uid), sk->sk_cmdline);
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2015/08/01, Add for net comsuption statistics for
+//process which use the same uid.
 	if (do_tag_stat)
-		account_for_uid(skb, sk, from_kuid(&init_user_ns, sock_uid),
-				par);
+	    account_for_uid(skb, sk, from_kuid(&init_user_ns, sock_uid), par, sk->sk_cmdline, 0);
+#else /* VENDOR_EDIT */
+	if (do_tag_stat)
+		account_for_uid(skb, sk, from_kuid(&init_user_ns, sock_uid), par);
+#endif /*VENDOR_EDIT */
 
 	/*
 	 * The following two tests fail the match when:
@@ -2468,6 +2698,25 @@ static ssize_t qtaguid_ctrl_parse(const char *input, size_t count)
 	case 'u':
 		res = ctrl_cmd_untag(input);
 		break;
+#ifdef VENDOR_EDIT
+//Runsheng.Pei@PSW.Android.OppoFeature.TrafficMonitor, 2014/09/16, Add for support network state
+//statistics by process information.
+	case 'r':
+		res = qtagpid_reset_stats();
+		break;
+
+	case 'n':
+		res = qtagpid_set_split_uid_list(input);
+		break;
+#endif /* VENDOR_EDIT */
+
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/11/10, Add for clear rbtree
+	case 'l':
+		input = input + 2; //skip 'l' and ' '
+		res = lost_stat_ctrl_parse(input);
+		break;
+#endif /* VENDOR_EDIT */
 
 	default:
 		res = -EINVAL;
@@ -2505,6 +2754,10 @@ struct proc_print_info {
 	tag_t tag; /* tag found by reading to tag_pos */
 	off_t tag_pos;
 	int tag_item_index;
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	struct pid_stat *ps_entry;
+#endif /* VENDOR_EDIT */
 };
 
 static void pp_stats_header(struct seq_file *m)
@@ -2930,6 +3183,11 @@ static const struct file_operations proc_qtaguid_stats_fops = {
 	.release	= seq_release_private,
 };
 
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+#include "xt_qtaguid_proc_qtaguid_stats_pid_fops.c"
+#endif /* VENDOR_EDIT */
+
 /*------------------------------------------*/
 static int __init qtaguid_proc_register(struct proc_dir_entry **res_procdir)
 {
@@ -2966,6 +3224,21 @@ static int __init qtaguid_proc_register(struct proc_dir_entry **res_procdir)
 	 * TODO: add support counter hacking
 	 * xt_qtaguid_stats_file->write_proc = qtaguid_stats_proc_write;
 	 */
+
+#ifdef VENDOR_EDIT
+//Geliang.Tan@PSW.Android.OppoFeature.TrafficMonitor, 2014/06/20, Add for tag pid
+	xt_qtaguid_stats_pid_file = proc_create_data("stats_pid", proc_stats_perms,
+			*res_procdir,
+			&proc_qtaguid_stats_pid_fops,
+			NULL);
+	if (!xt_qtaguid_stats_pid_file) {
+		pr_err("qtaguid: failed to create xt_qtaguid/stats_pid "
+				"file\n");
+		ret = -ENOMEM;
+		goto no_stats_entry;
+	}
+#endif /* VENDOR_EDIT */
+
 	return 0;
 
 no_stats_entry:
@@ -2996,6 +3269,13 @@ static int __init qtaguid_mt_init(void)
 	    || xt_register_match(&qtaguid_mt_reg)
 	    || misc_register(&qtu_device))
 		return -1;
+#ifdef VENDOR_EDIT
+//Jiemin.Zhu@PSW.Android.OppoFeature.TrafficMonitor, 2016/09/28, Add for lost packages
+	if (init_lost_stat()) {
+		printk("init lost stat failed\n");
+		return -1;
+	}
+#endif /* VENDOR_EDIT */
 	return 0;
 }
 

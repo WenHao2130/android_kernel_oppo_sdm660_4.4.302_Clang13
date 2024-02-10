@@ -38,6 +38,9 @@
 
 #include "internal.h"
 
+#ifdef VENDOR_EDIT
+#include "multi_freearea.h"
+#endif
 /*
  * online_page_callback contains pointer to current page onlining function.
  * Initially it is generic_online_page(). If it is required it could be
@@ -619,6 +622,9 @@ static void shrink_zone_span(struct zone *zone, unsigned long start_pfn,
 			zone->spanned_pages = pfn - zone_start_pfn + 1;
 	}
 
+#ifdef VENDOR_EDIT
+    ajust_zone_label(zone);
+#endif
 	/*
 	 * The section is not biggest or smallest mem_section in the zone, it
 	 * only creates a hole in the zone. So in this case, we need not
@@ -647,6 +653,9 @@ static void shrink_zone_span(struct zone *zone, unsigned long start_pfn,
 	/* The zone has no valid section */
 	zone->zone_start_pfn = 0;
 	zone->spanned_pages = 0;
+#ifdef VENDOR_EDIT
+    ajust_zone_label(zone);
+#endif
 	zone_span_writeunlock(zone);
 }
 
@@ -973,7 +982,6 @@ static void node_states_set_node(int node, struct memory_notify *arg)
 
 	node_set_state(node, N_MEMORY);
 }
-
 
 /* Must be protected by mem_hotplug_begin() */
 int __ref online_pages(unsigned long pfn, unsigned long nr_pages, int online_type)

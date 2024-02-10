@@ -28,6 +28,11 @@
 #include <linux/platform_device.h>
 #include <media/v4l2-fh.h>
 #include <media/videobuf2-v4l2.h>
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20150714 start for print camera time*/
+#include <linux/time.h>
+#include <linux/rtc.h>
+#endif
 
 #include "camera.h"
 #include "msm.h"
@@ -625,9 +630,24 @@ static int camera_v4l2_open(struct file *filep)
 	struct v4l2_event event;
 	struct msm_video_device *pvdev = video_drvdata(filep);
 	unsigned long opn_idx, idx;
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20150714 start for print camera time*/
+	struct timespec ts;
+	struct rtc_time tm;
+#endif
 	BUG_ON(!pvdev);
 
 	mutex_lock(&pvdev->video_drvdata_mutex);
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20150714 start for print camera time*/
+	if (!atomic_read(&pvdev->opened)) {
+		getnstimeofday(&ts);
+		rtc_time_to_tm(ts.tv_sec, &tm);
+		pr_info("%s: %d-%02d-%02d %02d:%02d:%02d.%09lu UTC\n", __func__,
+			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+			tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
+	}
+ #endif
 	rc = camera_v4l2_fh_open(filep);
 	if (rc < 0) {
 		pr_err("%s : camera_v4l2_fh_open failed Line %d rc %d\n",
@@ -739,6 +759,11 @@ static int camera_v4l2_close(struct file *filep)
 	struct camera_v4l2_private *sp = fh_to_private(filep->private_data);
 	unsigned int opn_idx, mask;
 	struct msm_session *session;
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20150714 start for print camera time*/
+	struct timespec ts;
+	struct rtc_time tm;
+#endif
 	BUG_ON(!pvdev);
 	session = msm_session_find(pvdev->vdev->num);
 	if (WARN_ON(!session))
@@ -786,6 +811,16 @@ static int camera_v4l2_close(struct file *filep)
 	}
 
 	camera_v4l2_fh_release(filep);
+#ifdef VENDOR_EDIT
+/*Added by Jinshui.Liu@Camera 20150714 start for print camera time*/
+	if (atomic_read(&pvdev->opened) == 0) {
+		getnstimeofday(&ts);
+		rtc_time_to_tm(ts.tv_sec, &tm);
+		pr_info("%s: %d-%02d-%02d %02d:%02d:%02d.%09lu UTC\n", __func__,
+			tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+			tm.tm_hour, tm.tm_min, tm.tm_sec, ts.tv_nsec);
+	}
+#endif
 	mutex_unlock(&pvdev->video_drvdata_mutex);
 
 	return 0;

@@ -29,12 +29,29 @@
 #include <linux/compat.h>
 #endif
 
+//#ifdef VENDOR_EDIT
+//wenjie.Liu@CN.NFC.Basic.Hardware.1189038, 2017/12/21,
+//Add for : nfc_chip deviceinfo
+#include <soc/oppo/device_info.h>
+//#endif /* VENDOR_EDIT */
+
+//wenjie.Liu@CN.NFC.Basic.Hardware.1164987, 2017/11/28,
+// add for:NXP NQ330-NFC(driver),current audio pull low i2c ,need enable audio; then later need to remove
+#ifdef VENDOR_EDIT
+#include <soc/oppo/oppo_project.h>
+#endif
+#define NFC_DRIVER_DEBUG = 1
 struct nqx_platform_data {
 	unsigned int irq_gpio;
 	unsigned int en_gpio;
 	unsigned int clkreq_gpio;
 	unsigned int firm_gpio;
 	unsigned int ese_gpio;
+    //wenjie.Liu@CN.NFC.Basic.Hardware.1164987, 2017/11/28,
+    // add for:NXP NQ330-NFC(driver),current audio pull low i2c ,need enable audio; then later need to remove
+	#ifdef VENDOR_EDIT
+	int audio_vdd_en_gpio;
+	#endif
 	const char *clk_src_name;
 };
 
@@ -42,6 +59,14 @@ static const struct of_device_id msm_match_table[] = {
 	{.compatible = "qcom,nq-nci"},
 	{}
 };
+#ifdef VENDOR_EDIT
+//wenjie.Liu@CN.NFC.Basic.Hardware.1189038, 2017/12/21,
+//Add for : nfc_chip deviceinfo,
+struct manufacture_info nfc_chip_info = {
+	.version = "pn54x",
+	.manufacture = "nxp",
+};
+#endif /* VENDOR_EDIT */
 
 MODULE_DEVICE_TABLE(of, msm_match_table);
 
@@ -466,43 +491,39 @@ int nfc_ioctl_power_states(struct file *filp, unsigned long arg)
 		dev_dbg(&nqx_dev->client->dev,
 			"gpio_set_value disable: %s: info: %p\n",
 			__func__, nqx_dev);
-		if (gpio_is_valid(nqx_dev->firm_gpio)) {
+		if (gpio_is_valid(nqx_dev->firm_gpio))
 			gpio_set_value(nqx_dev->firm_gpio, 0);
-			usleep_range(10000, 10100);
-		}
 
 		if (gpio_is_valid(nqx_dev->ese_gpio)) {
 			if (!gpio_get_value(nqx_dev->ese_gpio)) {
 				dev_dbg(&nqx_dev->client->dev, "disabling en_gpio\n");
 				gpio_set_value(nqx_dev->en_gpio, 0);
-				usleep_range(10000, 10100);
 			} else {
 				dev_dbg(&nqx_dev->client->dev, "keeping en_gpio high\n");
 			}
 		} else {
 			dev_dbg(&nqx_dev->client->dev, "ese_gpio invalid, set en_gpio to low\n");
 			gpio_set_value(nqx_dev->en_gpio, 0);
-			usleep_range(10000, 10100);
 		}
 		r = nqx_clock_deselect(nqx_dev);
 		if (r < 0)
 			dev_err(&nqx_dev->client->dev, "unable to disable clock\n");
 		nqx_dev->nfc_ven_enabled = false;
+		/* hardware dependent delay */
+		msleep(100);
 	} else if (arg == 1) {
 		nqx_enable_irq(nqx_dev);
 		dev_dbg(&nqx_dev->client->dev,
 			"gpio_set_value enable: %s: info: %p\n",
 			__func__, nqx_dev);
-		if (gpio_is_valid(nqx_dev->firm_gpio)) {
+		if (gpio_is_valid(nqx_dev->firm_gpio))
 			gpio_set_value(nqx_dev->firm_gpio, 0);
-			usleep_range(10000, 10100);
-		}
 		gpio_set_value(nqx_dev->en_gpio, 1);
-		usleep_range(10000, 10100);
 		r = nqx_clock_select(nqx_dev);
 		if (r < 0)
 			dev_err(&nqx_dev->client->dev, "unable to enable clock\n");
 		nqx_dev->nfc_ven_enabled = true;
+		msleep(20);
 	} else if (arg == 2) {
 		/*
 		 * We are switching to Dowload Mode, toggle the enable pin
@@ -515,15 +536,14 @@ int nfc_ioctl_power_states(struct file *filp, unsigned long arg)
 			}
 		}
 		gpio_set_value(nqx_dev->en_gpio, 1);
-		usleep_range(10000, 10100);
-		if (gpio_is_valid(nqx_dev->firm_gpio)) {
+		msleep(20);
+		if (gpio_is_valid(nqx_dev->firm_gpio))
 			gpio_set_value(nqx_dev->firm_gpio, 1);
-			usleep_range(10000, 10100);
-		}
+		msleep(20);
 		gpio_set_value(nqx_dev->en_gpio, 0);
-		usleep_range(10000, 10100);
+		msleep(100);
 		gpio_set_value(nqx_dev->en_gpio, 1);
-		usleep_range(10000, 10100);
+		msleep(20);
 	} else {
 		r = -ENOIOCTLCMD;
 	}
@@ -642,22 +662,39 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 {
 	int ret = 0;
 
+	#ifndef VENDOR_EDIT
+	//wenjie.Liu@CN.NFC.Basic.Hardware.1209105, 2018/01/06,
+	//Modify for : send get firmware version
 	unsigned char raw_nci_reset_cmd[] =  {0x20, 0x00, 0x01, 0x00};
 	unsigned char raw_nci_init_cmd[] =   {0x20, 0x01, 0x00};
 	unsigned char nci_init_rsp[28];
 	unsigned char nci_reset_rsp[6];
 	unsigned char init_rsp_len = 0;
+	#else
+	unsigned char raw_fw_get_version_cmd[] =  {0x00, 0x04, 0xF1, 0x00, 0x00, 0x00, 0x6E, 0xEF};
+	unsigned char fw_get_version_rsp[14];
+	unsigned int firm_gpio = nqx_dev->firm_gpio;
+	#endif /* VENDOR_EDIT */
 	unsigned int enable_gpio = nqx_dev->en_gpio;
-
+	//#ifdef VENDOR_EDIT
+	//wenjie.Liu@CN.NFC.Basic.Hardware.1209105, 2018/01/06,
+	//Add for : send get firmware version
+	gpio_set_value(firm_gpio, 1);
+	msleep(10);
+	//#endif /* VENDOR_EDIT */
 	/* making sure that the NFCC starts in a clean state. */
 	gpio_set_value(enable_gpio, 0);/* ULPM: Disable */
 	/* hardware dependent delay */
-	usleep_range(10000, 10100);
+	msleep(20);
 	gpio_set_value(enable_gpio, 1);/* HPD : Enable*/
 	/* hardware dependent delay */
-	usleep_range(10000, 10100);
+	msleep(20);
 
-	/* send NCI CORE RESET CMD with Keep Config parameters */
+#ifndef VENDOR_EDIT
+//wenjie.Liu@CN.NFC.Basic.Hardware.1209105, 2018/01/06,
+//Modify for :send get firmware version , sometime firmware cannot reset
+//in this case ,can download firmware to resolve
+/* send NCI CORE RESET CMD with Keep Config parameters */
 	ret = i2c_master_send(client, raw_nci_reset_cmd,
 						sizeof(raw_nci_reset_cmd));
 	if (ret < 0) {
@@ -671,17 +708,21 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 	/* Read Response of RESET command */
 	ret = i2c_master_recv(client, nci_reset_rsp,
 		sizeof(nci_reset_rsp));
+	dev_err(&client->dev,
+	"%s: - nq - reset cmd answer : NfcNciRx %x %x %x\n",
+	__func__, nci_reset_rsp[0],
+	nci_reset_rsp[1], nci_reset_rsp[2]);
 	if (ret < 0) {
 		dev_err(&client->dev,
 		"%s: - i2c_master_recv Error\n", __func__);
 		goto err_nfcc_hw_check;
 	}
-	ret = nqx_standby_write(nqx_dev, raw_nci_init_cmd,
-				sizeof(raw_nci_init_cmd));
+	ret = i2c_master_send(client, raw_nci_init_cmd,
+		sizeof(raw_nci_init_cmd));
 	if (ret < 0) {
 		dev_err(&client->dev,
 		"%s: - i2c_master_send Error\n", __func__);
-		goto err_nfcc_core_init_fail;
+		goto err_nfcc_hw_check;
 	}
 	/* hardware dependent delay */
 	msleep(30);
@@ -691,7 +732,7 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 	if (ret < 0) {
 		dev_err(&client->dev,
 		"%s: - i2c_master_recv Error\n", __func__);
-		goto err_nfcc_core_init_fail;
+		goto err_nfcc_hw_check;
 	}
 	init_rsp_len = 2 + nci_init_rsp[2]; /*payload + len*/
 	if (init_rsp_len > PAYLOAD_HEADER_LENGTH) {
@@ -704,11 +745,6 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 		nqx_dev->nqx_info.info.fw_minor =
 				nci_init_rsp[init_rsp_len];
 	}
-	dev_dbg(&client->dev,
-		"%s: - nq - reset cmd answer : NfcNciRx %x %x %x\n",
-		__func__, nci_reset_rsp[0],
-		nci_reset_rsp[1], nci_reset_rsp[2]);
-
 	dev_dbg(&nqx_dev->client->dev, "NQ NFCC chip_type = %x\n",
 		nqx_dev->nqx_info.info.chip_type);
 	dev_dbg(&nqx_dev->client->dev, "NQ fw version = %x.%x.%x\n",
@@ -743,16 +779,39 @@ static int nfcc_hw_check(struct i2c_client *client, struct nqx_dev *nqx_dev)
 		break;
 	}
 
+#else /* VENDOR_EDIT */
+	/* send get FW Version CMD */
+	ret = i2c_master_send(client, raw_fw_get_version_cmd,
+						sizeof(raw_fw_get_version_cmd));
+	if (ret < 0) {
+		dev_err(&client->dev,
+		"%s: - i2c_master_send Error\n", __func__);
+		goto err_nfcc_hw_check;
+	}
+	/* hardware dependent delay */
+	msleep(30);
+
+	/* Read Response of get fw version */
+	ret = i2c_master_recv(client, fw_get_version_rsp,
+						sizeof(fw_get_version_rsp));
+	dev_err(&client->dev,
+		"%s: - nq - firm cmd answer : NfcNciRx %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x %02x \n",
+			__func__, fw_get_version_rsp[0], fw_get_version_rsp[1],
+			fw_get_version_rsp[2], fw_get_version_rsp[3], fw_get_version_rsp[4], fw_get_version_rsp[5], fw_get_version_rsp[6],
+			fw_get_version_rsp[7], fw_get_version_rsp[8], fw_get_version_rsp[9], fw_get_version_rsp[10], fw_get_version_rsp[11],
+			fw_get_version_rsp[12], fw_get_version_rsp[13]);
+	if (ret < 0) {
+		dev_err(&client->dev,
+		"%s: - i2c_master_recv Error\n", __func__);
+		goto err_nfcc_hw_check;
+	}
+	gpio_set_value(firm_gpio, 0);
+#endif /* VENDOR_EDIT */
+
 	/*Disable NFC by default to save power on boot*/
 	gpio_set_value(enable_gpio, 0);/* ULPM: Disable */
 	ret = 0;
 	goto done;
-
-err_nfcc_core_init_fail:
-	dev_err(&client->dev,
-	"%s: - nq - reset cmd answer : NfcNciRx %x %x %x\n",
-	__func__, nci_reset_rsp[0],
-	nci_reset_rsp[1], nci_reset_rsp[2]);
 
 err_nfcc_hw_check:
 	ret = -ENXIO;
@@ -838,6 +897,24 @@ static int nfc_parse_dt(struct device *dev, struct nqx_platform_data *pdata)
 
 	pdata->clkreq_gpio = of_get_named_gpio(np, "qcom,nq-clkreq", 0);
 
+    //wenjie.Liu@CN.NFC.Basic.Hardware.1164987, 2017/11/28,
+    // add for:NXP NQ330-NFC(driver),current audio pull low i2c ,need enable audio; then later need to remove
+	/* Add pcb version for differnt hardware. GPIO60 use by audio
+	 * before DVT2, use by other module after DVT2.
+	 * Delete get_PCB_Version at next codebase which do not need
+	 * to compatible with different hardware.
+	 */
+    #ifdef VENDOR_EDIT
+	if (get_PCB_Version() < HW_VERSION__12) {
+	    pdata->audio_vdd_en_gpio = of_get_named_gpio(np,  "audio-vdd-enable-gpio", 0);
+		if (!gpio_is_valid(pdata->audio_vdd_en_gpio)) {
+			dev_err(dev, "fatal wenjie audio_vdd_gpio unable to set direction for gpio [%d]\n", pdata->audio_vdd_en_gpio);
+
+		} else {
+			dev_err(dev, "normal wenjie audio_vdd_gpio  to set direction for gpio [%d]\n", pdata->audio_vdd_en_gpio);
+		}
+	}
+	#endif
 	if (r)
 		return -EINVAL;
 	return r;
@@ -868,7 +945,24 @@ static int nqx_probe(struct i2c_client *client,
 	struct nqx_platform_data *platform_data;
 	struct nqx_dev *nqx_dev;
 
+#ifdef NFC_DRIVER_DEBUG
+	dev_err(&client->dev, "%s: enter\n", __func__);
+#else
 	dev_dbg(&client->dev, "%s: enter\n", __func__);
+#endif
+//wenjie.Liu@CN.NFC.Basic.Hardware.1164987, 2017/11/28,
+// add for:nfc chip share same irq ,cannot probe
+/* so need Distinguish 17085,
+* Operator_Version equals 5
+ */
+#ifdef VENDOR_EDIT
+	if (is_project(OPPO_17085) && get_Operator_Version() == 5) {
+		dev_err(&client->dev, "normal  nqx_probe Project[17085] Operator[5] \n");
+	} else {
+		dev_err(&client->dev, "wrong  nqx_probe get_project[%d] get_Operator_Version [%d]\n", get_project(),get_Operator_Version());
+		return -ENODEV;
+	}
+#endif
 	if (client->dev.of_node) {
 		platform_data = devm_kzalloc(&client->dev,
 			sizeof(struct nqx_platform_data), GFP_KERNEL);
@@ -882,9 +976,15 @@ static int nqx_probe(struct i2c_client *client,
 	} else
 		platform_data = client->dev.platform_data;
 
-	dev_dbg(&client->dev,
-		"%s, inside nfc-nci flags = %x\n",
-		__func__, client->flags);
+#ifdef NFC_DRIVER_DEBUG
+		dev_err(&client->dev,
+			"%s, inside nfc-nci flags = %x\n",
+			__func__, client->flags);
+#else
+		dev_dbg(&client->dev,
+			"%s, inside nfc-nci flags = %x\n",
+			__func__, client->flags);
+#endif
 
 	if (platform_data == NULL) {
 		dev_err(&client->dev, "%s: failed\n", __func__);
@@ -910,6 +1010,28 @@ static int nqx_probe(struct i2c_client *client,
 		r = -ENOMEM;
 		goto err_free_dev;
 	}
+
+//wenjie.Liu@CN.NFC.Basic.Hardware.1164987, 2017/11/28,
+// add for:NXP NQ330-NFC(driver),current audio pull low i2c ,need enable audio; then later need to remove
+/* Add pcb version for differnt hardware. GPIO60 use by audio
+ * before DVT2, use by other module after DVT2.
+ * Delete get_PCB_Version at next codebase which do not need
+ * to compatible with different hardware.
+ */
+#ifdef VENDOR_EDIT
+	if ((get_PCB_Version() < HW_VERSION__12)
+		&& gpio_is_valid(platform_data->audio_vdd_en_gpio)) {
+
+		r = gpio_direction_output(platform_data->audio_vdd_en_gpio, 1);
+		if (r) {
+			dev_err(&client->dev, "%s: wenjie fail to request nfc audio_vdd_en_gpio gpio [%d]\n",	__func__, platform_data->audio_vdd_en_gpio);
+
+			gpio_free(platform_data->audio_vdd_en_gpio);
+		} else {
+			dev_err(&client->dev, "%s: wenjie to request nfc audio_vdd_en_gpio gpio [%d]\n",		 __func__, platform_data->audio_vdd_en_gpio);
+		}
+	}
+#endif
 
 	if (gpio_is_valid(platform_data->en_gpio)) {
 		r = gpio_request(platform_data->en_gpio, "nfc_reset_gpio");
@@ -1103,6 +1225,12 @@ static int nqx_probe(struct i2c_client *client,
 	device_set_wakeup_capable(&client->dev, true);
 	i2c_set_clientdata(client, nqx_dev);
 	nqx_dev->irq_wake_up = false;
+
+//wenjie.Liu@CN.NFC.Basic.Hardware.1189038, 2017/12/21,
+//Add for : nfc_chip deviceinfo
+#ifdef VENDOR_EDIT
+	register_device_proc("nfc", nfc_chip_info.version, nfc_chip_info.manufacture);
+#endif /* VENDOR_EDIT */
 
 	dev_err(&client->dev,
 	"%s: probing NFCC NQxxx exited successfully\n",

@@ -24,6 +24,13 @@
 
 #include <soc/qcom/subsystem_restart.h>
 
+#ifdef VENDOR_EDIT
+#ifdef CONFIG_OPPO_KEVENT_UPLOAD
+/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
+#include <soc/qcom/oppo_mm_audio_kevent.h>
+#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
+#endif /* VENDOR_EDIT */
+
 #define Q6_PIL_GET_DELAY_MS 100
 #define BOOT_CMD 1
 #define IMAGE_UNLOAD_CMD 0
@@ -54,6 +61,13 @@ static void adsp_load_fw(struct work_struct *adsp_ldr_work)
 {
 	struct platform_device *pdev = adsp_private;
 	struct adsp_loader_private *priv = NULL;
+
+	#ifdef VENDOR_EDIT
+	#ifdef CONFIG_OPPO_KEVENT_UPLOAD
+	/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
+	unsigned char payload[64] = "";
+	#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
+	#endif /* VENDOR_EDIT */
 
 	const char *adsp_dt = "qcom,adsp-state";
 	int rc = 0;
@@ -131,6 +145,15 @@ load_adsp:
 			if (IS_ERR(priv->pil_h)) {
 				dev_err(&pdev->dev, "%s: pil get failed,\n",
 					__func__);
+				#ifdef VENDOR_EDIT
+				#ifdef CONFIG_OPPO_KEVENT_UPLOAD
+				/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
+				scnprintf(payload, sizeof(payload), "EventID@@%d$$adsp_fw_get_fail",
+					OPPO_MM_AUDIO_EVENT_ID_ADSP_FW_FAIL);
+				upload_mm_audio_kevent_data(payload);
+				#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
+				#endif /* VENDOR_EDIT */
+
 				goto fail;
 			}
 

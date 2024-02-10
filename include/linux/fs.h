@@ -56,6 +56,21 @@ struct iov_iter;
 struct fscrypt_info;
 struct fscrypt_operations;
 
+#define KERNEL_SPACE_BUF 0
+#define USR_SPACE_BUF 1
+#define TMP_RECORD_FILE_NAME "/data/local/tmp/filesysrecord"
+#define TMP_RECORD_MATCH_NAME "synthetic_password"
+#define TMP_DEBUG_BUF_LEN 256
+#define TMP_DEBUG_CMDLINE_LEN 256
+#define TMP_DEBUG_MAX_RECORD 4
+#define TMP_DEBUG_FILE_SIZE (10* 1024*1024)
+extern ssize_t vfs_write_geshifei(struct file *file, const char __user *buf, size_t count, loff_t *pos);
+extern ssize_t kernel_write_geshifei(struct file *file, const char *buf, size_t count, loff_t *pos);
+extern long vfs_truncate_geshifei(struct path *path, loff_t length);
+extern void debug_record_file(char *action, const char *name, int result);
+extern void debug_record_file_kernel(char *action, const char *name, int result);
+
+
 extern void __init inode_init(void);
 extern void __init inode_init_early(void);
 extern void __init files_init(void);
@@ -286,7 +301,7 @@ struct iattr {
  */
 #define FILESYSTEM_MAX_STACK_DEPTH 2
 
-/** 
+/**
  * enum positive_aop_returns - aop return codes with specific semantics
  *
  * @AOP_WRITEPAGE_ACTIVATE: Informs the caller that page writeback has
@@ -296,7 +311,7 @@ struct iattr {
  * 			    be a candidate for writeback again in the near
  * 			    future.  Other callers must be careful to unlock
  * 			    the page if they get this return.  Returned by
- * 			    writepage(); 
+ * 			    writepage();
  *
  * @AOP_TRUNCATED_PAGE: The AOP method that was handed a locked page has
  *  			unlocked it and the page might have been truncated.
@@ -961,8 +976,8 @@ static inline struct file *get_file(struct file *f)
 
 #define	MAX_NON_LFS	((1UL<<31) - 1)
 
-/* Page cache limit. The filesystems should put that into their s_maxbytes 
-   limits, otherwise bad things can happen in VM. */ 
+/* Page cache limit. The filesystems should put that into their s_maxbytes
+   limits, otherwise bad things can happen in VM. */
 #if BITS_PER_LONG==32
 #define MAX_LFS_FILESIZE	((loff_t)ULONG_MAX << PAGE_SHIFT)
 #elif BITS_PER_LONG==64
@@ -2018,7 +2033,7 @@ int sync_inode_metadata(struct inode *inode, int wait);
 struct file_system_type {
 	const char *name;
 	int fs_flags;
-#define FS_REQUIRES_DEV		1 
+#define FS_REQUIRES_DEV		1
 #define FS_BINARY_MOUNTDATA	2
 #define FS_HAS_SUBTYPE		4
 #define FS_USERNS_MOUNT		8	/* Can be mounted by userns root */
@@ -2635,7 +2650,7 @@ extern int kernel_read(struct file *, loff_t, char *, unsigned long);
 extern ssize_t kernel_write(struct file *, const char *, size_t, loff_t);
 extern ssize_t __kernel_write(struct file *, const char *, size_t, loff_t *);
 extern struct file * open_exec(const char *);
- 
+
 /* fs/dcache.c -- generic fs support functions */
 extern int is_subdir(struct dentry *, struct dentry *);
 extern int path_is_under(struct path *, struct path *);

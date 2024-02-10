@@ -1421,6 +1421,197 @@ FREE_GPIO_CONF:
 	return rc;
 }
 
+#ifdef VENDOR_EDIT
+/*Add by Zhengrong.Zhang@Camera 20161003 for cam vio ctrl*/
+int msm_camera_power_up_vendor(struct msm_camera_power_ctrl_t *ctrl,
+	enum msm_camera_device_type_t device_type,
+	struct msm_camera_i2c_client *sensor_i2c_client)
+{
+	int rc = 0, index = 0, no_gpio = 0, ret = 0;
+	struct msm_sensor_power_setting *power_setting = NULL;
+
+	CDBG("%s:%d\n", __func__, __LINE__);
+	if (!ctrl || !sensor_i2c_client) {
+		pr_err("failed ctrl %pK sensor_i2c_client %pK\n", ctrl,
+			sensor_i2c_client);
+		return -EINVAL;
+	}
+	if (ctrl->gpio_conf->cam_gpiomux_conf_tbl != NULL)
+		pr_err("%s:%d mux install\n", __func__, __LINE__);
+
+	rc = msm_camera_request_gpio_table(
+		ctrl->gpio_conf->cam_gpio_req_tbl,
+		ctrl->gpio_conf->cam_gpio_req_tbl_size, 1);
+	if (rc < 0)
+		no_gpio = rc;
+	if (ctrl->cam_pinctrl_status) {
+		ret = pinctrl_select_state(ctrl->pinctrl_info.pinctrl,
+			ctrl->pinctrl_info.gpio_state_active);
+		if (ret)
+			pr_err("%s:%d cannot set pin to active state",
+				__func__, __LINE__);
+	}
+	for (index = 0; index < ctrl->power_setting_size; index++) {
+		CDBG("%s index %d\n", __func__, index);
+		power_setting = &ctrl->power_setting[index];
+		CDBG("%s type %d\n", __func__, power_setting->seq_type);
+		switch (power_setting->seq_type) {
+		case SENSOR_CLK:
+			if (power_setting->seq_val >= ctrl->clk_info_size) {
+				pr_err("%s clk index %d >= max %zu\n", __func__,
+					power_setting->seq_val,
+					ctrl->clk_info_size);
+				goto power_up_failed;
+			}
+			if (power_setting->config_val)
+				ctrl->clk_info[power_setting->seq_val].
+					clk_rate = power_setting->config_val;
+			rc = msm_camera_clk_enable(ctrl->dev,
+				ctrl->clk_info, ctrl->clk_ptr,
+				ctrl->clk_info_size, true);
+			if (rc < 0) {
+				pr_err("%s: clk enable failed\n", __func__);
+				goto power_up_failed;
+			}
+			break;
+		case SENSOR_GPIO:
+			if (no_gpio) {
+				pr_err("%s: request gpio failed\n", __func__);
+				return no_gpio;
+			}
+			if (power_setting->seq_val >= SENSOR_GPIO_MAX ||
+				!ctrl->gpio_conf->gpio_num_info) {
+				pr_err("%s gpio index %d >= max %d\n", __func__,
+					power_setting->seq_val,
+					SENSOR_GPIO_MAX);
+				goto power_up_failed;
+			}
+			if (!ctrl->gpio_conf->gpio_num_info->valid
+				[power_setting->seq_val])
+				continue;
+			CDBG("%s:%d gpio set val %d\n", __func__, __LINE__,
+				ctrl->gpio_conf->gpio_num_info->gpio_num
+				[power_setting->seq_val]);
+			gpio_set_value_cansleep(
+				ctrl->gpio_conf->gpio_num_info->gpio_num
+				[power_setting->seq_val],
+				(int) power_setting->config_val);
+			break;
+		case SENSOR_VREG:
+			if (power_setting->seq_val == INVALID_VREG)
+				break;
+
+			if (power_setting->seq_val >= CAM_VREG_MAX) {
+				pr_err("%s vreg index %d >= max %d\n", __func__,
+					power_setting->seq_val,
+					SENSOR_GPIO_MAX);
+				goto power_up_failed;
+			}
+			if (power_setting->seq_val < ctrl->num_vreg)
+				msm_camera_config_single_vreg(ctrl->dev,
+					&ctrl->cam_vreg
+					[power_setting->seq_val],
+					(struct regulator **)
+					&power_setting->data[0],
+					1);
+			else
+				pr_err("%s: %d usr_idx:%d dts_idx:%d\n",
+					__func__, __LINE__,
+					power_setting->seq_val, ctrl->num_vreg);
+
+			rc = msm_cam_sensor_handle_reg_gpio(
+				power_setting->seq_val,
+				ctrl->gpio_conf, 1);
+			if (rc < 0) {
+				pr_err("ERR:%s Error in handling VREG GPIO\n",
+					__func__);
+				goto power_up_failed;
+			}
+			break;
+		case SENSOR_I2C_MUX:
+			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
+				msm_camera_enable_i2c_mux(ctrl->i2c_conf);
+			break;
+		default:
+			pr_err("%s error power seq type %d\n", __func__,
+				power_setting->seq_type);
+			break;
+		}
+		if (power_setting->delay > 20) {
+			msleep(power_setting->delay);
+		} else if (power_setting->delay) {
+			usleep_range(power_setting->delay * 1000,
+				(power_setting->delay * 1000) + 1000);
+		}
+	}
+
+	CDBG("%s exit\n", __func__);
+	return 0;
+power_up_failed:
+	pr_err("%s:%d failed\n", __func__, __LINE__);
+	for (index--; index >= 0; index--) {
+		CDBG("%s index %d\n", __func__, index);
+		power_setting = &ctrl->power_setting[index];
+		CDBG("%s type %d\n", __func__, power_setting->seq_type);
+		switch (power_setting->seq_type) {
+		case SENSOR_GPIO:
+			if (!ctrl->gpio_conf->gpio_num_info)
+				continue;
+			if (!ctrl->gpio_conf->gpio_num_info->valid
+				[power_setting->seq_val])
+				continue;
+			gpio_set_value_cansleep(
+				ctrl->gpio_conf->gpio_num_info->gpio_num
+				[power_setting->seq_val], GPIOF_OUT_INIT_LOW);
+			break;
+		case SENSOR_VREG:
+			if (power_setting->seq_val < ctrl->num_vreg)
+				msm_camera_config_single_vreg(ctrl->dev,
+					&ctrl->cam_vreg
+					[power_setting->seq_val],
+					(struct regulator **)
+					&power_setting->data[0],
+					0);
+			else
+				pr_err("%s:%d:seq_val: %d > num_vreg: %d\n",
+					__func__, __LINE__,
+					power_setting->seq_val, ctrl->num_vreg);
+
+			msm_cam_sensor_handle_reg_gpio(power_setting->seq_val,
+				ctrl->gpio_conf, GPIOF_OUT_INIT_LOW);
+			break;
+		case SENSOR_I2C_MUX:
+			if (ctrl->i2c_conf && ctrl->i2c_conf->use_i2c_mux)
+				msm_camera_disable_i2c_mux(ctrl->i2c_conf);
+			break;
+		default:
+			pr_err("%s error power seq type %d\n", __func__,
+				power_setting->seq_type);
+			break;
+		}
+		if (power_setting->delay > 20) {
+			msleep(power_setting->delay);
+		} else if (power_setting->delay) {
+			usleep_range(power_setting->delay * 1000,
+				(power_setting->delay * 1000) + 1000);
+		}
+	}
+	if (ctrl->cam_pinctrl_status) {
+		ret = pinctrl_select_state(ctrl->pinctrl_info.pinctrl,
+				ctrl->pinctrl_info.gpio_state_suspend);
+		if (ret)
+			pr_err("%s:%d cannot set pin to suspend state\n",
+				__func__, __LINE__);
+		devm_pinctrl_put(ctrl->pinctrl_info.pinctrl);
+	}
+	ctrl->cam_pinctrl_status = 0;
+	msm_camera_request_gpio_table(
+		ctrl->gpio_conf->cam_gpio_req_tbl,
+		ctrl->gpio_conf->cam_gpio_req_tbl_size, 0);
+	return rc;
+}
+#endif
+
 int msm_camera_power_up(struct msm_camera_power_ctrl_t *ctrl,
 	enum msm_camera_device_type_t device_type,
 	struct msm_camera_i2c_client *sensor_i2c_client)

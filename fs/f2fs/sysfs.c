@@ -609,6 +609,232 @@ static int iostat_info_seq_show(struct seq_file *seq, void *offset)
 	return 0;
 }
 
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019/08/21, add f2fs frag_info */
+extern int sysctl_f2fs_fsync_nobarrier;
+
+extern int find_next_free_extent(const unsigned long *addr,
+			  unsigned long size, unsigned long *offset);
+static int frag_score_seq_show(struct seq_file *seq, void *offset)
+{
+	struct super_block *sb = seq->private;
+	struct f2fs_sb_info *sbi = F2FS_SB(sb);
+	unsigned int i, total_segs =
+			le32_to_cpu(sbi->raw_super->segment_count_main);
+	block_t blocks[9], total_blks = 0;
+	unsigned int score;
+	memset(blocks, 0, sizeof(blocks));
+	for (i = 0; i < total_segs; i++) {
+		struct seg_entry *se = get_seg_entry(sbi, i);
+		unsigned long start = 0;
+		int blks, idx;
+		if (se->valid_blocks == 0 || se->valid_blocks == sbi->blocks_per_seg)
+			continue;
+
+		while (start < sbi->blocks_per_seg) {
+			blks = find_next_free_extent((unsigned long *)se->cur_valid_map,
+						       sbi->blocks_per_seg,
+						       &start);
+			if (unlikely(blks < 0))
+				break;
+
+			idx = ilog2(blks);
+			if (idx < ARRAY_SIZE(blocks)) {
+				blocks[idx] += blks;
+			}
+			total_blks += blks;
+		}
+		cond_resched();
+	}
+	total_blks += free_segments(sbi) * (1<<(sbi)->log_blocks_per_seg);
+	f2fs_msg(sbi->sb, KERN_INFO, "Extent Size Range: Free Blocks");
+	for (i = 0; i < ARRAY_SIZE(blocks); i++)
+		if (i < 8)
+			f2fs_msg(sbi->sb, KERN_INFO, "%dK...%dK-: %u", 4<<i, 4<<(i+1), blocks[i]);
+		else
+			f2fs_msg(sbi->sb, KERN_INFO, "%dM...%dM-: %u", 1<<(i-8), 1<<(i-7), blocks[i]);
+
+	score = total_blks ? (blocks[0] + blocks[1]) * 100ULL / total_blks : 0;
+	seq_printf(seq, "%u\n", score);
+	return 0;
+}
+
+static int free_frag_seq_show(struct seq_file *seq, void *offset)
+{
+	struct super_block *sb = seq->private;
+	struct f2fs_sb_info *sbi = F2FS_SB(sb);
+	unsigned int i, total_segs =
+			le32_to_cpu(sbi->raw_super->segment_count_main);
+	block_t blocks[10], total_blks = 0;
+	memset(blocks, 0, sizeof(blocks));
+	for (i = 0; i < total_segs; i++) {
+		struct seg_entry *se = get_seg_entry(sbi, i);
+		unsigned long start = 0;
+		int blks, idx;
+		if (se->valid_blocks == 0 || se->valid_blocks == sbi->blocks_per_seg)
+			continue;
+
+		while (start < sbi->blocks_per_seg) {
+			blks = find_next_free_extent((unsigned long *)se->cur_valid_map,
+						       sbi->blocks_per_seg,
+						       &start);
+			if (unlikely(blks < 0))
+				break;
+
+			idx = ilog2(blks);
+			if (idx < ARRAY_SIZE(blocks)) {
+				blocks[idx] += blks;
+			}
+			total_blks += blks;
+		}
+		cond_resched();
+	}
+
+	blocks[9] = free_segments(sbi) * (1<<(sbi)->log_blocks_per_seg);
+	total_blks += blocks[9];
+
+	for (i = 0; i < ARRAY_SIZE(blocks); i++) {
+		if (!blocks[i])
+			continue;
+		else if (i < 8)
+			seq_printf(seq,	"%dKto%dK:%u\n", 4<<i, 4<<(i+1), blocks[i]);
+		else
+			seq_printf(seq, "%dMto%dM:%u\n", 1<<(i-8), 1<<(i-7), blocks[i]);
+	}
+	return 0;
+}
+
+static int undiscard_score_seq_show(struct seq_file *seq, void *offset)
+{
+	struct super_block *sb = seq->private;
+	struct f2fs_sb_info *sbi = F2FS_SB(sb);
+	unsigned int undiscard_blks = 0;
+	unsigned int free_blks = sbi->user_block_count - valid_user_blocks(sbi);
+	unsigned int score;
+	if (SM_I(sbi) && SM_I(sbi)->dcc_info)
+		undiscard_blks =  SM_I(sbi)->dcc_info->undiscard_blks;
+	score = free_blks ? undiscard_blks * 100ULL / free_blks : 0;
+	seq_printf(seq, "%u\n", score);
+	return 0;
+}
+extern int sysctl_f2fs_fsync_nobarrier;
+static int f2fs_nobarrier_seq_show(struct seq_file *seq, void *p)
+{
+	seq_printf(seq, "%d\n", sysctl_f2fs_fsync_nobarrier);
+	return 0;
+}
+
+static ssize_t f2fs_nobarrier_write(struct file *filp, const char __user *ubuf,
+	size_t cnt, loff_t *ppos)
+{
+	char buf[8] = { 0 };
+	ssize_t buf_size;
+
+	if (!cnt) {
+		return 0;
+	}
+
+	buf_size = min(cnt, (size_t)(sizeof(buf)-1));
+	if (copy_from_user(buf, ubuf, buf_size)) {
+			return -EFAULT;
+	}
+	buf[buf_size-1] = 0;
+
+	if (buf[0] == '0') {
+		sysctl_f2fs_fsync_nobarrier = 0;
+	} else {
+		sysctl_f2fs_fsync_nobarrier = 2;
+	}
+	return cnt;
+}
+static int f2fs_nobarrier_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, f2fs_nobarrier_seq_show, NULL);
+}
+
+static const struct file_operations f2fs_seq_nobarrier_fops = {
+	.open = f2fs_nobarrier_open,
+	.read = seq_read,
+	.write = f2fs_nobarrier_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+extern int gc_dc_opt;
+static int f2fs_gc_dc_opt_seq_show(struct seq_file *seq, void *p)
+{
+	seq_printf(seq, "%d\n", gc_dc_opt);
+	return 0;
+}
+
+static ssize_t f2fs_gc_dc_opt_write(struct file *filp, const char __user *ubuf,
+	size_t cnt, loff_t *ppos)
+{
+	char buf[8] = { 0 };
+	ssize_t buf_size;
+
+	if (!cnt) {
+		return 0;
+	}
+
+	buf_size = min(cnt, (size_t)(sizeof(buf)-1));
+	if (copy_from_user(buf, ubuf, buf_size)) {
+			return -EFAULT;
+	}
+	buf[buf_size-1] = 0;
+
+	if (buf[0] == '0') {
+		gc_dc_opt = 0;
+	} else {
+		gc_dc_opt = 1;
+	}
+	return cnt;
+}
+static int f2fs_gc_dc_opt_open(struct inode *inode, struct file *file)
+{
+	return single_open(file, f2fs_gc_dc_opt_seq_show, NULL);
+}
+
+static const struct file_operations f2fs_seq_gc_dc_opt_fops = {
+	.open = f2fs_gc_dc_opt_open,
+	.read = seq_read,
+	.write = f2fs_gc_dc_opt_write,
+	.llseek = seq_lseek,
+	.release = single_release,
+};
+
+extern int f2fs_trim_status;
+static int f2fs_trim_status_seq_show(struct seq_file *seq, void *p)
+{
+	seq_printf(seq, "%d\n", f2fs_trim_status);
+	return 0;
+}
+
+static ssize_t f2fs_write_int(const char __user *ubuf, size_t cnt, int *dst)
+{
+	char buf[8] = { 0 };
+	ssize_t buf_size;
+
+	if (!cnt) {
+		return 0;
+	}
+
+	buf_size = min(cnt, (size_t)(sizeof(buf)-1));
+	if (copy_from_user(buf, ubuf, buf_size)) {
+		return -EFAULT;
+	}
+	buf[buf_size-1] = 0;
+
+	if (buf[0] == '0') {
+		*dst = 0;
+	} else {
+		*dst = 1;
+	}
+	return cnt;
+}
+
+#endif
+
 #define F2FS_PROC_FILE_DEF(_name)					\
 static int _name##_open_fs(struct inode *inode, struct file *file)	\
 {									\
@@ -622,9 +848,38 @@ static const struct file_operations f2fs_seq_##_name##_fops = {		\
 	.release = single_release,					\
 };
 
+#define F2FS_PROC_FILE_DEF_RW(_name)					\
+static int _name##_open_fs(struct inode *inode, struct file *file)	\
+{									\
+	return single_open(file, _name##_seq_show, PDE_DATA(inode));	\
+}\
+static ssize_t _name##_write(struct file *filp, const char __user *ubuf, size_t cnt, loff_t *ppos)	\
+{	\
+	int *dst = &(_name);\
+	return f2fs_write_int(ubuf, cnt, dst);	\
+}	\
+static const struct file_operations _name##_fops = {	\
+	.open = _name##_open_fs,					\
+	.read = seq_read,						\
+	.write = _name##_write,					\
+	.llseek = seq_lseek,					\
+	.release = single_release,				\
+};
+
+
 F2FS_PROC_FILE_DEF(segment_info);
 F2FS_PROC_FILE_DEF(segment_bits);
 F2FS_PROC_FILE_DEF(iostat_info);
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019/08/21, add f2fs frag_info */
+F2FS_PROC_FILE_DEF(frag_score);
+F2FS_PROC_FILE_DEF(free_frag);
+F2FS_PROC_FILE_DEF(undiscard_score);
+F2FS_PROC_FILE_DEF(f2fs_nobarrier);
+F2FS_PROC_FILE_DEF(f2fs_gc_dc_opt);
+#endif
+F2FS_PROC_FILE_DEF_RW(f2fs_trim_status);
+
 
 int __init f2fs_init_sysfs(void)
 {
@@ -669,12 +924,31 @@ int f2fs_register_sysfs(struct f2fs_sb_info *sbi)
 		sbi->s_proc = proc_mkdir(sb->s_id, f2fs_proc_root);
 
 	if (sbi->s_proc) {
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019/08/21, add f2fs frag_info */
+		proc_create_data("frag_score", S_IRUGO, sbi->s_proc,
+				 &f2fs_seq_frag_score_fops, sb);
+		proc_create_data("free_frag", S_IRUGO, sbi->s_proc,
+				 &f2fs_seq_free_frag_fops, sb);
+		proc_create_data("undiscard_score", S_IRUGO, sbi->s_proc,
+				 &f2fs_seq_undiscard_score_fops, sb);
+		proc_create_data("f2fs_fsync_nobarrier", S_IRUGO | S_IWUGO, sbi->s_proc,
+				 &f2fs_seq_nobarrier_fops, sb);
+		proc_create_data("gc_dc_opt", S_IRUGO | S_IWUGO, sbi->s_proc,
+				 &f2fs_seq_gc_dc_opt_fops, sb);
+		proc_create_data("f2fs_trim_status", S_IRUGO | S_IWUGO, sbi->s_proc,
+				 &f2fs_trim_status_fops, sb);
+
+#endif
 		proc_create_data("segment_info", S_IRUGO, sbi->s_proc,
 				 &f2fs_seq_segment_info_fops, sb);
 		proc_create_data("segment_bits", S_IRUGO, sbi->s_proc,
 				 &f2fs_seq_segment_bits_fops, sb);
 		proc_create_data("iostat_info", S_IRUGO, sbi->s_proc,
 				&f2fs_seq_iostat_info_fops, sb);
+#ifdef CONFIG_F2FS_BD_STAT
+		f2fs_build_bd_stat(sbi);
+#endif
 	}
 	return 0;
 }
@@ -682,9 +956,21 @@ int f2fs_register_sysfs(struct f2fs_sb_info *sbi)
 void f2fs_unregister_sysfs(struct f2fs_sb_info *sbi)
 {
 	if (sbi->s_proc) {
+#ifdef CONFIG_F2FS_BD_STAT
+		f2fs_destroy_bd_stat(sbi);
+#endif
 		remove_proc_entry("iostat_info", sbi->s_proc);
 		remove_proc_entry("segment_info", sbi->s_proc);
 		remove_proc_entry("segment_bits", sbi->s_proc);
+#ifdef VENDOR_EDIT
+/* yanwu@TECH.Storage.FS.oF2FS, 2019/08/21, add f2fs frag_info */
+		remove_proc_entry("undiscard_score", sbi->s_proc);
+		remove_proc_entry("frag_score", sbi->s_proc);
+		remove_proc_entry("free_frag", sbi->s_proc);
+		remove_proc_entry("f2fs_fsync_nobarrier", sbi->s_proc);
+		remove_proc_entry("gc_dc_opt", sbi->s_proc);
+		remove_proc_entry("f2fs_trim_status", sbi->s_proc);
+#endif
 		remove_proc_entry(sbi->sb->s_id, f2fs_proc_root);
 	}
 	kobject_del(&sbi->s_kobj);

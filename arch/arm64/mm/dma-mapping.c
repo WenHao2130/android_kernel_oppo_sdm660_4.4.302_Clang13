@@ -1235,6 +1235,27 @@ static inline void __free_iova(struct dma_iommu_mapping *mapping,
 	spin_unlock_irqrestore(&mapping->lock, flags);
 }
 
+#ifdef VENDOR_EDIT
+/* Kui.Zhang@PSW.TEC.Kernel.Performance, 2019/02/02, not do reclaim and
+ * page compact on high order (>4), and order decrease flow is 10->8->4->0
+ */
+static inline int next_order(int order)
+{
+	if (order > 8)
+		return 8;
+	if (order > 4)
+		return 4;
+	return 0;
+}
+
+static inline gfp_t reclaim_gfp(int order, gfp_t gfp)
+{
+	if (order >= 4)
+		return (gfp | __GFP_NORETRY) & ~__GFP_RECLAIM;
+	return gfp;
+}
+#endif /* VENDOR_EDIT */
+
 static struct page **__iommu_alloc_buffer(struct device *dev, size_t size,
 					  gfp_t gfp, struct dma_attrs *attrs)
 {
@@ -1275,9 +1296,20 @@ static struct page **__iommu_alloc_buffer(struct device *dev, size_t size,
 	while (count) {
 		int j, order = __fls(count);
 
+#ifdef VENDOR_EDIT
+		/* Kui.Zhang@PSW.TEC.Kernel.Performance, 2019/02/02,
+		 * do not do reclaim and page compact on high order (>4)
+		 */
+		pages[i] = alloc_pages(reclaim_gfp(order, gfp), order);
+		while (!pages[i] && order) {
+			order = next_order(order);
+			pages[i] = alloc_pages(reclaim_gfp(order, gfp), order);
+		}
+#else
 		pages[i] = alloc_pages(gfp, order);
 		while (!pages[i] && order)
 			pages[i] = alloc_pages(gfp, --order);
+#endif /* VENDOR_EDIT */
 		if (!pages[i])
 			goto error;
 
@@ -1926,10 +1958,17 @@ arm_iommu_create_mapping(struct bus_type *bus, dma_addr_t base, size_t size)
 	if (!mapping)
 		goto err;
 
+#ifdef VENDOR_EDIT
+	/* Kui.Zhang@PSW.TEC.KERNEL.Performance, 2019/02/02,
+	 * use vzmalloc directly
+	 */
+	mapping->bitmap = vzalloc(bitmap_size);
+#else
 	mapping->bitmap = kzalloc(bitmap_size, GFP_KERNEL | __GFP_NOWARN |
 							__GFP_NORETRY);
 	if (!mapping->bitmap)
 		mapping->bitmap = vzalloc(bitmap_size);
+#endif
 
 	if (!mapping->bitmap)
 		goto err2;

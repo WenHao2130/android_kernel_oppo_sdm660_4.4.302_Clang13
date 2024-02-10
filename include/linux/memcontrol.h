@@ -396,17 +396,21 @@ static inline bool mem_cgroup_inactive_anon_is_low(struct lruvec *lruvec)
 	unsigned long inactive_ratio;
 	unsigned long inactive;
 	unsigned long active;
+#ifndef VENDOR_EDIT
+/*Huacai.Zhou@PSW.BSP.Kernel.MM, 2018-07-21, try to shrink more anon pages*/
 	unsigned long gb;
-
+#endif
 	inactive = mem_cgroup_get_lru_size(lruvec, LRU_INACTIVE_ANON);
 	active = mem_cgroup_get_lru_size(lruvec, LRU_ACTIVE_ANON);
 
+#ifndef VENDOR_EDIT
+/*Huacai.Zhou@PSW.BSP.Kernel.MM, 2018-07-21, try to shrink more anon pages*/
 	gb = (inactive + active) >> (30 - PAGE_SHIFT);
 	if (gb)
 		inactive_ratio = int_sqrt(10 * gb);
 	else
+#endif
 		inactive_ratio = 1;
-
 	return inactive * inactive_ratio < active;
 }
 

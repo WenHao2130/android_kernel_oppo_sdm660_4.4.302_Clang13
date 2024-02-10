@@ -1551,6 +1551,14 @@ int mdss_dsi_on(struct mdss_panel_data *pdata)
 
 	mdss_dsi_clamp_phy_reset_config(ctrl_pdata, true);
 
+	#ifdef VENDOR_EDIT
+	/*
+	* Guoqiang.Jiang@PSW.MM.Display.LCD.Machine, 2018/09/12,
+	* add for lcd rst before lp11
+	*/
+	oppo_reset_before_lp11(pdata);
+	#endif /*VENDOR_EDIT*/
+
 	/* DSI link clocks need to be on prior to ctrl sw reset */
 	mdss_dsi_clk_ctrl(ctrl_pdata, ctrl_pdata->dsi_clk_handle,
 			  MDSS_DSI_LINK_CLK, MDSS_DSI_CLK_ON);
@@ -1918,8 +1926,21 @@ static void __mdss_dsi_update_video_mode_total(struct mdss_panel_data *pdata,
 		return;
 	}
 
+	#ifdef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+	 * solve mdp dump error in monkey test.
+	 */
+	if (ctrl_pdata->timing_db_mode) {
+		spin_lock(&ctrl_pdata->db_mode_mutex);
+		reinit_completion(&ctrl_pdata->db_mode_wait);
+		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x1e8, 0x1);
+		pr_debug("%s DB_MODE %d\n", __func__, 0x1);
+		spin_unlock(&ctrl_pdata->db_mode_mutex);
+	}
+	#else /*VENDOR_EDIT*/
 	if (ctrl_pdata->timing_db_mode)
 		MIPI_OUTP((ctrl_pdata->ctrl_base) + 0x1e8, 0x1);
+	#endif /*VENDOR_EDIT*/
 
 	vsync_period =
 		mdss_panel_get_vtotal(&pdata->panel_info);
@@ -2041,6 +2062,29 @@ static void __mdss_dsi_calc_dfps_delay(struct mdss_panel_data *pdata)
 	MIPI_OUTP((ctrl_pdata->ctrl_base) + DSI_DYNAMIC_REFRESH_PLL_DELAY,
 						pll_delay);
 }
+
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/31,
+//add for dynamic mipi dsi clk
+static int mdss_dsi_panel_update_clkrate(struct mdss_dsi_ctrl_pdata *ctrl,
+			u32 bitrate)
+{
+	struct mdss_panel_info *pinfo = &ctrl->panel_data.panel_info;
+
+	pr_debug("%s: ndx=%d switching to clk_rate=%d\n", __func__,
+			ctrl->ndx, bitrate);
+
+	pinfo->clk_rate = bitrate;
+
+	if (bitrate == 0)
+		ctrl->refresh_clk_rate = true;
+
+	mdss_dsi_clk_refresh(&ctrl->panel_data,false);
+	atomic_inc(&ctrl->clkrate_change_pending);
+
+	return 0;
+}
+#endif /*VENDOR_EDIT*/
 
 static int __mdss_dsi_dfps_calc_clks(struct mdss_panel_data *pdata,
 		u64 new_clk_rate)
@@ -2757,6 +2801,15 @@ static void mdss_dsi_timing_db_ctrl(struct mdss_dsi_ctrl_pdata *ctrl,
 		  MDSS_DSI_CORE_CLK, MDSS_DSI_CLK_ON);
 	MIPI_OUTP((ctrl->ctrl_base + 0x1e8), enable);
 	wmb(); /* ensure timing db is disabled */
+	#ifdef VENDOR_EDIT
+	/* Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/08/22,
+	 * solve mdp dump error in monkey test.
+	 */
+	if (!enable && ctrl->timing_db_mode) {
+		complete_all(&ctrl->db_mode_wait);
+		pr_debug("%s DB_MODE %d\n", __func__, enable);
+	}
+	#endif /*VENDOR_EDIT*/
 	mdss_dsi_clk_ctrl(ctrl, ctrl->dsi_clk_handle,
 		  MDSS_DSI_CORE_CLK, MDSS_DSI_CLK_OFF);
 }
@@ -3066,6 +3119,18 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 	case MDSS_EVENT_DSI_PANEL_STATUS:
 		rc = mdss_dsi_check_panel_status(ctrl_pdata, arg);
 		break;
+
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/31,
+//add for dynamic mipi dsi clk
+	case MDSS_EVENT_PANEL_UPDATE_DSI_TIMING:
+		rc = mdss_dsi_panel_update_clkrate(ctrl_pdata,
+				(u32)(unsigned long)arg);
+		pr_debug("Update dsi timing to %d\n",
+				(u32) (unsigned long) arg);
+		break;
+#endif /*VENDOR_EDIT*/
+
 	case MDSS_EVENT_PANEL_TIMING_SWITCH:
 		rc = mdss_dsi_panel_timing_switch(ctrl_pdata, arg);
 		break;
@@ -3586,6 +3651,12 @@ static int mdss_dsi_ctrl_probe(struct platform_device *pdev)
 
 	ctrl_pdata->mdss_util = util;
 	atomic_set(&ctrl_pdata->te_irq_ready, 0);
+
+#ifdef VENDOR_EDIT
+//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/31,
+//add for dynamic mipi dsi clk
+	atomic_set(&ctrl_pdata->clkrate_change_pending, 0);
+#endif /*VENDOR_EDIT*/
 
 	ctrl_name = of_get_property(pdev->dev.of_node, "label", NULL);
 	if (!ctrl_name)
@@ -4565,6 +4636,24 @@ static int mdss_dsi_parse_gpio_params(struct platform_device *ctrl_pdev,
 		pr_debug("%s:%d mode gpio not specified\n", __func__, __LINE__);
 		ctrl_pdata->lcd_mode_sel_gpio = -EINVAL;
 	}
+
+#ifdef VENDOR_EDIT
+/*
+ * Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/30,
+ * add for lcd -5v
+ */
+	ctrl_pdata->disp_enn_gpio=of_get_named_gpio(
+			ctrl_pdev->dev.of_node, "qcom,platform-enable-negative-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->disp_enn_gpio))
+		pr_debug("%s:%d disp_enn gpio not specified\n", __func__, __LINE__);
+
+//add for panel 1.8v
+	ctrl_pdata->lcd_1v8_en_gpio= of_get_named_gpio(
+			ctrl_pdev->dev.of_node, "qcom,platform-lcd-1v8-gpio", 0);
+	if (!gpio_is_valid(ctrl_pdata->lcd_1v8_en_gpio)) {
+		pr_err("%s:%d lcd lcd_1v8_en_gpio not specified\n", __func__, __LINE__);
+	}
+#endif /*VENDOR_EDIT*/
 
 	return 0;
 }

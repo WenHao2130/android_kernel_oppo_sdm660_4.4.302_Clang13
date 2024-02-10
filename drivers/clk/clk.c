@@ -2314,7 +2314,16 @@ EXPORT_SYMBOL_GPL(clk_set_flags);
 
 static struct dentry *rootdir;
 static int inited = 0;
+#ifndef VENDOR_EDIT
+//Fuchun.Liao@BSP.CHG.Basic 2017/04/10 modify for power issue debug
 static u32 debug_suspend;
+#else
+#ifdef CONFIG_OPPO_DAILY_BUILD
+static u32 debug_suspend = 1;
+#else
+static u32 debug_suspend;
+#endif /* CONFIG_OPPO_DAILY_BUILD */
+#endif /* VENDOR_EDIT */
 static DEFINE_MUTEX(clk_debug_lock);
 static HLIST_HEAD(clk_debug_list);
 

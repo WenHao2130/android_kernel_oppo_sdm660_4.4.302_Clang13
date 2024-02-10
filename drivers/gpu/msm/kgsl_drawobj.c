@@ -35,6 +35,14 @@
 #include "kgsl_sync.h"
 #include "kgsl_trace.h"
 #include "kgsl_compat.h"
+#ifdef VENDOR_EDIT
+/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2017/11/25  Add for keylog */
+#include <soc/oppo/mmkey_log.h>
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+/* Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm dcs for gpu. */
+#include <linux/oppo_mm_kevent_fb.h>
+#endif /*VENDOR_EDIT*/
 
 /*
  * Define an kmem cache for the memobj & sparseobj structures since we
@@ -125,6 +133,10 @@ static void syncobj_timer(unsigned long data)
 	struct kgsl_drawobj_sync_event *event;
 	unsigned int i;
 	unsigned long flags;
+#ifdef VENDOR_EDIT
+/*Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm kevent gpu.*/
+	unsigned char payload[100] = "";
+#endif /*VENDOR_EDIT*/
 
 	if (syncobj == NULL || drawobj->context == NULL)
 		return;
@@ -167,6 +179,15 @@ static void syncobj_timer(unsigned long data)
 		}
 	}
 
+#ifdef VENDOR_EDIT
+/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2017/11/25  Add for keylog */
+	mm_keylog_write("gpu exception\n", "possible gpu syncpoint deadlock\n", TYPE_GPU_EXCEPTION);
+#endif /* VENDOR_EDIT */
+#ifdef VENDOR_EDIT
+/* Wenhua.Leng@PSW.MM.Display.LCD.Machine, 2019/02/11,add for mm kevent gpu. */
+		scnprintf(payload, sizeof(payload), "EventID@@%d$$GPU_fault@@syncpoint deadlock",OPPO_MM_DIRVER_FB_EVENT_ID_GPU_FENCE_TIMEOUT);
+		upload_mm_kevent_fb_data(OPPO_MM_DIRVER_FB_EVENT_MODULE_DISPLAY,payload);
+#endif /*VENDOR_EDIT*/
 	dev_err(device->dev, "--gpu syncpoint deadlock print end--\n");
 }
 
@@ -603,13 +624,29 @@ static void add_profiling_buffer(struct kgsl_device *device,
 		return;
 	}
 
-	cmdobj->profiling_buf_entry = entry;
 
-	if (id != 0)
+	if (!id) {
+		cmdobj->profiling_buffer_gpuaddr = gpuaddr;
+	} else {
+		u64 off = offset + sizeof(struct kgsl_drawobj_profiling_buffer);
+
+		/*
+		 * Make sure there is enough room in the object to store the
+		 * entire profiling buffer object
+		 */
+		if (off < offset || off >= entry->memdesc.size) {
+			dev_err(device->dev,
+				"ignore invalid profile offset ctxt %d id %d offset %lld gpuaddr %llx size %lld\n",
+			drawobj->context->id, id, offset, gpuaddr, size);
+			kgsl_mem_entry_put(entry);
+			return;
+		}
+
 		cmdobj->profiling_buffer_gpuaddr =
 			entry->memdesc.gpuaddr + offset;
-	else
-		cmdobj->profiling_buffer_gpuaddr = gpuaddr;
+	}
+
+	cmdobj->profiling_buf_entry = entry;
 }
 
 /**

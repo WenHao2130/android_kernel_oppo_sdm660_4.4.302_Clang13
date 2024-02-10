@@ -26,6 +26,14 @@
 
 #define MMC_AUTOSUSPEND_DELAY_MS	3000
 
+#ifdef VENDOR_EDIT
+//jie.cheng@swdp.shanghai, 2016-08-10 Add emmc scaling control api
+#define MAX_MMC_STORE_HOST 3
+extern struct mmc_host* mmc_store_host[MAX_MMC_STORE_HOST];
+extern int mmc_scaling_enable(struct mmc_host* host, int value);
+extern bool storage_is_mmc(void);
+#endif
+
 struct mmc_ios {
 	unsigned int	clock;			/* clock rate */
 	unsigned int	old_rate;       /* saved clock rate */
@@ -514,6 +522,10 @@ struct mmc_host {
 
 	struct delayed_work	detect;
 	int			detect_change;	/* card detect flag */
+#ifdef VENDOR_EDIT
+//Lycan.Wang@Prd.BasicDrv, 2014-07-10 Add for retry 5 times when new sdcard init error
+    int detect_change_retry;
+#endif /* VENDOR_EDIT */
 	struct mmc_slot		slot;
 
 	const struct mmc_bus_ops *bus_ops;	/* current bus driver */
@@ -528,7 +540,10 @@ struct mmc_host {
 	struct task_struct	*sdio_irq_thread;
 	bool			sdio_irq_pending;
 	atomic_t		sdio_irq_thread_abort;
-
+#ifdef VENDOR_EDIT
+//yh@bsp, 2015-10-21 Add for special card compatible
+	bool                    card_stuck_in_programing_status;
+#endif /* VENDOR_EDIT */
 	mmc_pm_flag_t		pm_flags;	/* requested pm features */
 
 	struct led_trigger	*led;		/* activity led */

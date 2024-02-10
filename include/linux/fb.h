@@ -163,6 +163,13 @@ struct fb_cursor_user {
 /*      A hardware display blank revert early change occured */
 #define FB_R_EARLY_EVENT_BLANK		0x11
 
+#ifdef VENDOR_EDIT
+/* Shengjun.Gou@PSW.MM.Display.LCD.Stability, 2017/06/13
+ * add for tp fingerprint notify
+*/
+#define MSM_DRM_ONSCREENFINGERPRINT_EVENT 0x20
+#endif /*VENDOR_EDIT*/
+
 struct fb_event {
 	struct fb_info *info;
 	void *data;
@@ -634,6 +641,10 @@ extern struct fb_info *registered_fb[FB_MAX];
 extern int num_registered_fb;
 extern struct class *fb_class;
 
+#ifdef VENDOR_EDIT
+//jie.cheng@swdp.shanghai, 2015/11/09, export some symbol
+extern struct fb_info *get_fb_info(unsigned int idx);
+#endif /* VENDOR_EDIT */
 extern int lock_fb_info(struct fb_info *info);
 
 static inline void unlock_fb_info(struct fb_info *info)

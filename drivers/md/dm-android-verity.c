@@ -115,6 +115,16 @@ static inline bool is_userdebug(void)
 	return !strncmp(buildvariant, typeuserdebug, sizeof(typeuserdebug));
 }
 
+//#ifdef VENDOR_EDIT
+//Xuefeng.Peng@PSW.AD.Usb.Adb.1054277, 2018/09/28, Add for user version do not enable dm-verity
+static inline bool is_user(void)
+{
+	static const char typeuser[]  = "user";
+
+	return !strncmp(buildvariant, typeuser, sizeof(typeuser));
+}
+//#endif/*VENDOR_EDIT*/
+
 static inline bool is_unlocked(void)
 {
 	static const char unlocked[] = "orange";
@@ -371,8 +381,21 @@ static int verify_header(struct android_metadata_header *header)
 {
 	int retval = -EINVAL;
 
-	if (is_userdebug() && le32_to_cpu(header->magic_number) ==
+	//#ifdef VENDOR_EDIT
+	//Xuefeng.Peng@PSW.AD.Usb.Adb.1054277, 2018/09/28, Add for user version do not enable dm-verity
+	//if (is_userdebug() && le32_to_cpu(header->magic_number) ==
+			//VERITY_METADATA_MAGIC_DISABLE)
+	//#else
+	//#ifdef VENDOR_EDIT
+	//Bin.Li@BSP.Fingerprint.Basic, 2018/11/21, Added for disable verify when the device is unlocked
+	if (is_unlocked()) {
+		DMWARN("disable verity when unlocked");
+		return VERITY_STATE_DISABLE;
+	}
+	//#endif/*VENDOR_EDIT*/
+	if ((is_user() || is_userdebug()) && le32_to_cpu(header->magic_number) ==
 			VERITY_METADATA_MAGIC_DISABLE)
+	//#endif/*VENDOR_EDIT*/
 		return VERITY_STATE_DISABLE;
 
 	if (!(le32_to_cpu(header->magic_number) ==

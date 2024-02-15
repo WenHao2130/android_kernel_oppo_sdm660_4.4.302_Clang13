@@ -8,5 +8,4 @@ sdcardfs-y := dentry.o file.o inode.o main.o super.o lookup.o mmap.o packagelist
 #ifdef VENDOR_EDIT
 #Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
 sdcardfs-y += dev.o
-sdcardfs-y += dellog.o
 #endif /* VENDOR_EDIT */

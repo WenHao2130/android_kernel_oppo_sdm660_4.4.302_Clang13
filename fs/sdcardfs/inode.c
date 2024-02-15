@@ -21,12 +21,6 @@
 #include "sdcardfs.h"
 #include <linux/fs_struct.h>
 #include <linux/ratelimit.h>
-#ifdef VENDOR_EDIT
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-#include "dellog.h"
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-#define DCIM_DELETE_ERR  999
-#endif /* VENDOR_EDIT */
 #include <linux/sched.h>
 
 const struct cred *override_fsids(struct sdcardfs_sb_info *sbi,
@@ -142,24 +136,11 @@ static int sdcardfs_unlink(struct inode *dir, struct dentry *dentry)
 	struct dentry *lower_dir_dentry;
 	struct path lower_path;
 	const struct cred *saved_cred = NULL;
-#ifdef VENDOR_EDIT
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-	struct sdcardfs_inode_info *info = SDCARDFS_I(d_inode(dentry));
-#endif /* VENDOR_EDIT */
 
 	if (!check_caller_access_to_name(dir, &dentry->d_name)) {
 		err = -EACCES;
 		goto out_eacces;
 	}
-#ifdef VENDOR_EDIT
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-	if (info->data->under_dcim && dcim_delete_skip()) {
-		if (!dcim_delete_uevent(dentry)) {
-			err = DCIM_DELETE_ERR;
-			goto out_eacces;
-		}
-	}
-#endif /* VENDOR_EDIT */
 
 	/* save current_cred and override it */
 	saved_cred = override_fsids(SDCARDFS_SB(dir->i_sb),
@@ -192,14 +173,6 @@ static int sdcardfs_unlink(struct inode *dir, struct dentry *dentry)
 		  sdcardfs_lower_inode(d_inode(dentry))->i_nlink);
 	d_inode(dentry)->i_ctime = dir->i_ctime;
 	d_drop(dentry); /* this is needed, else LTP fails (VFS won't do it) */
-#ifdef VENDOR_EDIT
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-	if (info->data->under_dcim && !err) {
-		DEL_LOG("[%u]%s\n",
-			(unsigned int) current_uid().val,
-			dentry->d_name.name);
-	}
-#endif /* VENDOR_EDIT */
 out:
 	unlock_dir(lower_dir_dentry);
 	dput(lower_dentry);
@@ -375,31 +348,11 @@ static int sdcardfs_rmdir(struct inode *dir, struct dentry *dentry)
 	int err;
 	struct path lower_path;
 	const struct cred *saved_cred = NULL;
-#ifdef VENDOR_EDIT
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-	struct sdcardfs_inode_info *info = SDCARDFS_I(d_inode(dentry));
-#endif /* VENDOR_EDIT */
 
 	if (!check_caller_access_to_name(dir, &dentry->d_name)) {
 		err = -EACCES;
 		goto out_eacces;
 	}
-#ifdef VENDOR_EDIT
-//Jiemin.Zhu@PSW.Android.SdardFs, 2017/12/12, Add for sdcardfs delete dcim record
-	if (info->data->perm == PERM_DCIM && dcim_delete_skip()) {
-		pr_err("sdcardfs: %s pid %d uid %u want to rmdir %s, skip it\n",
-			current->comm, current->pid, from_kuid(&init_user_ns, current_uid()),
-			dentry->d_name.name);
-		err = DCIM_DELETE_ERR;
-		goto out_eacces;
-	}
-	if (info->data->under_dcim && dcim_delete_skip()) {
-		if (!dcim_delete_uevent(dentry)) {
-			err = DCIM_DELETE_ERR;
-			goto out_eacces;
-		}
-	}
-#endif /* VENDOR_EDIT */
 
 	/* save current_cred and override it */
 	saved_cred = override_fsids(SDCARDFS_SB(dir->i_sb),

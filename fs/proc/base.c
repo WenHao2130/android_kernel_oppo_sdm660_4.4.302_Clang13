@@ -1027,93 +1027,6 @@ static const struct file_operations proc_static_ux_operations = {
 };
 #endif
 
-#ifdef VENDOR_EDIT
-// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for stuck monitor
-static int proc_stuck_trace_show(struct seq_file *m, void *v)
-{
-    struct inode *inode = m->private;
-    struct task_struct *p;
-    u64 d_time, s_time, ltt_time, big_time, rn_time, iow_time, binder_time, futex_time;
-    p = get_proc_task(inode);
-    if (!p) {
-        return -ESRCH;
-    }
-    task_lock(p);
-    iow_time = p->oppo_stuck_info.d_state.iowait_ns;
-    binder_time = p->oppo_stuck_info.s_state.binder_ns;
-    futex_time = p->oppo_stuck_info.s_state.futex_ns;
-
-    d_time = p->oppo_stuck_info.d_state.iowait_ns + p->oppo_stuck_info.d_state.mutex_ns +
-        p->oppo_stuck_info.d_state.downread_ns + p->oppo_stuck_info.d_state.downwrite_ns +
-        p->oppo_stuck_info.d_state.other_ns;
-
-    s_time = p->oppo_stuck_info.s_state.binder_ns + p->oppo_stuck_info.s_state.futex_ns +
-        p->oppo_stuck_info.s_state.epoll_ns + p->oppo_stuck_info.s_state.other_ns;
-
-    ltt_time = p->oppo_stuck_info.ltt_running_state;
-
-    big_time = p->oppo_stuck_info.big_running_state;
-
-    rn_time = p->oppo_stuck_info.runnable_state;
-
-    task_unlock(p);
-
-    seq_printf(m, "BR:%llu LR:%llu RN:%llu D:%llu IOW:%llu S:%llu BD:%llu FT:%llu\n",
-        big_time / NSEC_PER_MSEC, ltt_time / NSEC_PER_MSEC, rn_time / NSEC_PER_MSEC,
-        d_time / NSEC_PER_MSEC, iow_time / NSEC_PER_MSEC,
-        s_time / NSEC_PER_MSEC, binder_time / NSEC_PER_MSEC, futex_time / NSEC_PER_MSEC);
-    put_task_struct(p);
-    return 0;
-}
-
-static int proc_stuck_trace_open(struct inode* inode, struct file *filp)
-{
-    return single_open(filp, proc_stuck_trace_show, inode);
-}
-
-static ssize_t proc_stuck_trace_write(struct file *file, const char __user *buf,
-                size_t count, loff_t *ppos)
-{
-    struct task_struct *task;
-    char buffer[PROC_NUMBUF];
-    int err, stuck_trace;
-
-    memset(buffer, 0, sizeof(buffer));
-    if (count > sizeof(buffer) - 1)
-        count = sizeof(buffer) - 1;
-    if (copy_from_user(buffer, buf, count)) {
-        return -EFAULT;
-    }
-
-    err = kstrtoint(strstrip(buffer), 0, &stuck_trace);
-    if(err) {
-        return err;
-    }
-    task = get_proc_task(file_inode(file));
-    if (!task) {
-        return -ESRCH;
-    }
-
-    if (stuck_trace == 1) {
-        task->stuck_trace = 1;
-    } else if (stuck_trace == 0) {
-        task->stuck_trace = 0;
-        memset(&task->oppo_stuck_info, 0, sizeof(struct oppo_uifirst_monitor_info));
-    }
-
-    put_task_struct(task);
-    return count;
-}
-
-static const struct file_operations proc_stuck_trace_operations = {
-    .open       = proc_stuck_trace_open,
-    .write      = proc_stuck_trace_write,
-    .read       = seq_read,
-    .llseek     = seq_lseek,
-    .release    = single_release,
-};
-#endif
-
 static int environ_open(struct inode *inode, struct file *file)
 {
 	return __mem_open(inode, file, PTRACE_MODE_READ);
@@ -3354,10 +3267,6 @@ static const struct pid_entry tgid_base_stuff[] = {
 	REG("timerslack_ns", S_IRUGO|S_IWUGO, proc_pid_set_timerslack_ns_operations),
 #ifdef CONFIG_CPU_FREQ_TIMES
 	ONE("time_in_state", 0444, proc_time_in_state_show),
-#endif
-#ifdef VENDOR_EDIT
-// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for stuck monitor
-    	REG("stuck_info", S_IRUGO | S_IWUGO, proc_stuck_trace_operations),
 #endif
 };
 

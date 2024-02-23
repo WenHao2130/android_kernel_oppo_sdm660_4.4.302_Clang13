@@ -32,7 +32,6 @@
 //add for Lcd ftm \ project and mmkey
 #include <soc/oppo/oppo_project.h>
 #include <soc/oppo/boot_mode.h>
-#include <soc/oppo/mmkey_log.h>
 #include <soc/oppo/device_info.h>
 #endif /*VENDOR_EDIT*/
 #define DT_CMD_HDR 6

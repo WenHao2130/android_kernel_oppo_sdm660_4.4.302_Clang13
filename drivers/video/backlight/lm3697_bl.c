@@ -30,7 +30,6 @@
 #ifdef VENDOR_EDIT
 //YongPeng.Yi@MultiMedia.Display.LCD.Stability, 2017/02/28,
 //add for 2048 bl level too low in ftm mode
-#include <soc/oppo/mmkey_log.h>
 #include <soc/oppo/device_info.h>
 #include <soc/oppo/oppo_project.h>
 #include <soc/oppo/boot_mode.h>
@@ -638,8 +637,6 @@ static int lm3697_bl_probe(struct i2c_client *client,
     if (ret < 0) {
         dev_err(&client->dev, "fail : init chip\n");
         //YongPeng.Yi@MultiMedia.Display.LCD.Stability, 2017/03/08,
-        //add for bl key log
-        mm_keylog_write("No Backlight\n", "Backlight device probe failed\n", TYPE_BL_EXCEPTION);
         goto error_enable;
     }
 

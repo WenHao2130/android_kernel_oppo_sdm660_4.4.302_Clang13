@@ -2347,20 +2347,8 @@ static void futex_wait_queue_me(struct futex_hash_bucket *hb, struct futex_q *q,
 		 * flagged for rescheduling. Only call schedule if there
 		 * is no timeout, or if it has yet to expire.
 		 */
-#ifdef VENDOR_EDIT
-// Liujie.Xie@TECH.Kernel.Sched, 2019/08/29, add for ui first
-        if (!timeout || timeout->task) {
-            if (sysctl_uifirst_enabled) {
-                futex_dynamic_ux_enqueue(q->wait_for, current);
-            }
-	    current->in_futex = 1;
-            freezable_schedule();
-	    current->in_futex = 0;
-        }
-#else /* VENDOR_EDIT */
 		if (!timeout || timeout->task)
 			freezable_schedule();
-#endif /* VENDOR_EDIT */
 	}
 	__set_current_state(TASK_RUNNING);
 }

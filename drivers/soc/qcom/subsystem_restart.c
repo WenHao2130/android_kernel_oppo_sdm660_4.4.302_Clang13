@@ -39,13 +39,6 @@
 
 #include <asm/current.h>
 
-//#ifdef VENDOR_EDIT
-//Canjie.Zheng@Swdp.Android.OppoDebug.CriticalLog, 2016/06/03,add for critical
-//record subSystem crash
-//#include "../../../include/soc/oppo/mmkey_log.h"
-#include <soc/oppo/mmkey_log.h>
-//#endif /* VENDOR_EDIT */
-
 #include "peripheral-loader.h"
 
 #define DISABLE_SSR 0x9889deed
@@ -1128,12 +1121,6 @@ int subsystem_restart_dev(struct subsys_device *dev)
 
 	pr_info("Restart sequence requested for %s, restart_level = %s.\n",
 		name, restart_levels[dev->restart_level]);
-
-    //#ifdef VENDOR_EDIT
-    //Canjie.Zheng@Swdp.Android.OppoDebug.CriticalLog, 2016/06/03,add for critical
-    //record subSystem crash
-    mm_keylog_write("subSystem restart", name, TYPE_SUBSYSTEM_RESTART);
-    //#endif /*VENDOR_EDIT*/
 	
 	if (disable_restart_work == DISABLE_SSR) {
 		pr_warn("subsys-restart: Ignoring restart request for %s.\n",

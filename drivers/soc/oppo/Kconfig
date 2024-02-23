@@ -22,39 +22,5 @@ config OPPO_DEVICE_IFNO
 source "drivers/soc/oppo/oppo_project/Kconfig"
 
 source "drivers/soc/oppo/oppo_devinfo/Kconfig"
-
-source "drivers/soc/oppo/oppo_trace/Kconfig"
-source "drivers/soc/oppo/oppo_mdmrst/Kconfig"
-
-#ifdef VENDOR_EDIT
-#//John.Xu@PhoneSw.AudioDriver, 2016/02/22, Add for critical_log
-source "drivers/soc/oppo/oppo_criticallog/Kconfig"
-#endif /* VENDOR_EDIT */
-
-#ifdef VENDOR_EDIT
-#//jie.cheng@swdp.sh, 2016/04/15, Add hypnus helper
-#source "drivers/soc/oppo/oppo_hypnus/Kconfig"
-#endif /* VENDOR_EDIT */
-
-#ifdef VENDOR_EDIT
-#//wenbin.liu@PSW.Kernel.MM, 2018/05/23, Add for Healthinfo monitor
-source "drivers/soc/oppo/oppo_healthinfo/Kconfig"
-#endif /* VENDOR_EDIT */
-
-#ifdef VENDOR_EDIT
-#//Wen.Luo@BSP
-source "drivers/soc/oppo/oppo_shutdown_detect/Kconfig"
-#endif /* VENDOR_EDIT */
-
-#ifdef VENDOR_EDIT
-#Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
-source "drivers/soc/oppo/oppo_phoenix/Kconfig"
-#endif
-
-#ifdef VENDOR_EDIT
-#//GaoTing.Gan@PSW.MultiMedia.MediaServer, 2019/03/07, Add for kevent feedback
-source "drivers/soc/oppo/oppo_kevent_feedback/Kconfig"
-#endif /* VENDOR_EDIT */
-
 #endif /* VENDOR_EDIT */
 

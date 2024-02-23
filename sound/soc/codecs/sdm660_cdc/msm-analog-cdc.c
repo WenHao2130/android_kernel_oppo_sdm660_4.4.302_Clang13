@@ -34,13 +34,6 @@
 #include "../../msm/sdm660-common.h"
 #include "../wcd-mbhc-v2.h"
 
-#ifdef VENDOR_EDIT
-#ifdef CONFIG_OPPO_KEVENT_UPLOAD
-/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
-#include <soc/qcom/oppo_mm_audio_kevent.h>
-#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
-#endif /* VENDOR_EDIT */
-
 #define DRV_NAME "pmic_analog_codec"
 #define SDM660_CDC_RATES (SNDRV_PCM_RATE_8000 | SNDRV_PCM_RATE_16000 |\
 			SNDRV_PCM_RATE_32000 | SNDRV_PCM_RATE_44100 |\
@@ -4045,13 +4038,6 @@ static int sdm660_cdc_notifier_service_cb(struct notifier_block *nb,
 	unsigned long timeout;
 	static bool initial_boot = true;
 
-	#ifdef VENDOR_EDIT
-	#ifdef CONFIG_OPPO_KEVENT_UPLOAD
-	/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
-	unsigned char payload[64] = "";
-	#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
-	#endif /* VENDOR_EDIT */
-
 	codec = sdm660_cdc_priv->codec;
 	dev_dbg(codec->dev, "%s: Service opcode 0x%lx\n", __func__, opcode);
 
@@ -4094,14 +4080,6 @@ static int sdm660_cdc_notifier_service_cb(struct notifier_block *nb,
 powerup:
 		if (adsp_ready)
 			msm_anlg_cdc_device_up(codec);
-		#ifdef VENDOR_EDIT
-		#ifdef CONFIG_OPPO_KEVENT_UPLOAD
-		/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
-		scnprintf(payload, sizeof(payload), "EventID@@%d$$adsp_ssr",
-			OPPO_MM_AUDIO_EVENT_ID_ADSP_RESET);
-		upload_mm_audio_kevent_data(payload);
-		#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
-		#endif /* VENDOR_EDIT */
 		break;
 	default:
 		break;

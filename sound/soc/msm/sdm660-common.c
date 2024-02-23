@@ -22,13 +22,6 @@
 #include "../codecs/sdm660_cdc/msm-analog-cdc.h"
 #include "../codecs/wsa881x.h"
 
-#ifdef VENDOR_EDIT
-#ifdef CONFIG_OPPO_KEVENT_UPLOAD
-/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
-#include <soc/qcom/oppo_mm_audio_kevent.h>
-#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
-#endif /* VENDOR_EDIT */
-
 #define DRV_NAME "sdm660-asoc-snd"
 
 #define MSM_INT_DIGITAL_CODEC "msm-dig-codec"
@@ -2479,13 +2472,6 @@ int msm_mi2s_snd_startup(struct snd_pcm_substream *substream)
 	int index = cpu_dai->id;
 	unsigned int fmt = SND_SOC_DAIFMT_CBS_CFS;
 
-	#ifdef VENDOR_EDIT
-	#ifdef CONFIG_OPPO_KEVENT_UPLOAD
-	/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
-	unsigned char payload[256] = "";
-	#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
-	#endif /* VENDOR_EDIT */
-
 	dev_dbg(rtd->card->dev,
 		"%s: substream = %s  stream = %d, dai name %s, dai ID %d\n",
 		__func__, substream->name, substream->stream,
@@ -2533,14 +2519,6 @@ int msm_mi2s_snd_startup(struct snd_pcm_substream *substream)
 			if (ret < 0) {
 				pr_err("%s: afe lpass mclk failed, err:%d\n",
 					__func__, ret);
-				#ifdef VENDOR_EDIT
-				#ifdef CONFIG_OPPO_KEVENT_UPLOAD
-				/*Xiaoke.Zhi@PSW.MM.AudioDriver.Stability, 2019/03/06, Add for audio driver kevent log*/
-				scnprintf(payload, sizeof(payload), "EventID@@%d$$mi2s_set_clk_fail$$index@@%d$$path@@%d$$err@@%d",
-					OPPO_MM_AUDIO_EVENT_ID_CLK_FAIL, index, substream->stream, ret);
-				upload_mm_audio_kevent_data(payload);
-				#endif /* CONFIG_OPPO_KEVENT_UPLOAD */
-				#endif /* VENDOR_EDIT */
 				goto clk_off;
 			}
 		}

@@ -33,12 +33,6 @@ obj-$(CONFIG_SND_SOC_MSM8998) += snd-soc-msm8998.o
 # for SDM660 sound card driver
 snd-soc-sdm660-common-objs := sdm660-common.o
 obj-$(CONFIG_SND_SOC_SDM660_COMMON) += snd-soc-sdm660-common.o
-#ifdef VENDOR_EDIT
-#Jianfeng.Qiu@PSW.MM.AudioDriver.Machine, 2017/12/19, Modify for card register fail
-ifdef CONFIG_OPPO_KEVENT_UPLOAD
-obj-y += oppo_mm_audio_kevent.o
-endif
-#endif /* VENDOR_EDIT */
 
 # for SDM660 sound card driver
 snd-soc-int-codec-objs := sdm660-internal.o

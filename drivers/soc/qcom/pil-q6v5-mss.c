@@ -73,7 +73,6 @@ static void log_modem_sfr(void)
 	wmb();
 }
 #else
-extern void mdmreason_set(char * buf);
 static int log_modem_sfr(void)
 {
 	u32 size;
@@ -91,7 +90,6 @@ static int log_modem_sfr(void)
 		return rc;
 	}
 	strlcpy(reason, smem_reason, min(size, MAX_SSR_REASON_LEN));
-	mdmreason_set(reason);
 	pr_err("modem subsystem failure reason: %s.\n", reason);
 
 	if(strstr(reason, "OPPO_MODEM_NO_RAMDUMP_EXPECTED")){

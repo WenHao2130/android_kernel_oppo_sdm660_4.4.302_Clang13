@@ -22,11 +22,6 @@
 #include "mdss_mdp_trace.h"
 #include "mdss_dsi_clk.h"
 #include <linux/interrupt.h>
-#ifdef VENDOR_EDIT
-//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/13,
-//add for display key log
-#include <soc/oppo/mmkey_log.h>
-#endif /*VENDOR_EDIT*/
 
 #define MAX_RECOVERY_TRIALS 10
 #define MAX_SESSIONS 2
@@ -2126,11 +2121,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 		MDSS_XLOG(status, rc, atomic_read(&ctx->koff_cnt));
 		if (status) {
 			pr_warn("pp done but irq not triggered\n");
-#ifdef VENDOR_EDIT
-//Guoqiang.Jiang@MultiMedia.Display.LCD.Stability, 2018/10/13,
-//modify for display key log
-			mm_keylog_write("mdss mdp cmd wait4pingpong exception\n", "pp done but irq not triggered\n", TYPE_VSYNC_EXCEPTION);
-#endif /*VEDNOR_EDIT*/
 			mdss_mdp_irq_clear(ctl->mdata,
 				MDSS_MDP_IRQ_TYPE_PING_PONG_COMP,
 				ctx->current_pp_num);
@@ -2177,11 +2167,6 @@ static int mdss_mdp_cmd_wait4pingpong(struct mdss_mdp_ctl *ctl, void *arg)
 				"dsi_dbg_bus", "panic");
 		} else if (ctx->pp_timeout_report_cnt == MAX_RECOVERY_TRIALS) {
 			MDSS_XLOG(0xbad2);
-#ifdef VENDOR_EDIT
-//Guoqiang.Jiang@PSW.MM.Display.LCD.Stability, 2018/10/12,
-//add for display key log
-            mm_keylog_write("mdss mdp cmd wait4pingpong exception\n", "cmd kickoff timed out\n", TYPE_VSYNC_EXCEPTION);
-#endif /*VENDOR_EDIT*/
 			MDSS_XLOG_TOUT_HANDLER("mdp", "dsi0_ctrl", "dsi0_phy",
 				"dsi1_ctrl", "dsi1_phy", "vbif", "vbif_nrt",
 				"dbg_bus", "vbif_dbg_bus",

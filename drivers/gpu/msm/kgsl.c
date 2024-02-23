@@ -48,10 +48,6 @@
 #include "kgsl_sync.h"
 #include "kgsl_compat.h"
 #include "kgsl_pool.h"
-#ifdef VENDOR_EDIT
-/* Xiaori.Yuan@PSW.MM.Display.GPU.Log, 2017/11/25  Add for keylog */
-#include <soc/oppo/mmkey_log.h>
-#endif /*VENDOR_EDIT*/
 
 #undef MODULE_PARAM_PREFIX
 #define MODULE_PARAM_PREFIX "kgsl."
@@ -4682,7 +4678,6 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 				}
 			}
 			if (!saved) {
-				mm_keylog_write("get_unmapped_area failed\n", "GPU OOM\n", TYPE_IOMMU_ERROR);
 				nucm[nucm_index++] = private->pid;
 				if (nucm_index >= FAILED_PID_CNT) {
 					nucm_index = 0;
@@ -4715,7 +4710,6 @@ kgsl_get_unmapped_area(struct file *file, unsigned long addr,
 				}
 			}
 			if (!saved) {
-				mm_keylog_write("_get_svm_area failed\n", "GPU OOM\n", TYPE_IOMMU_ERROR);
 				ucm[ucm_index++] = private->pid;
 				if (ucm_index >= FAILED_PID_CNT) {
 					ucm_index = 0;

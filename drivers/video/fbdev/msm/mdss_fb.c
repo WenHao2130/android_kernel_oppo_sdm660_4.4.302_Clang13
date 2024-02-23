@@ -63,7 +63,6 @@
 */
 #include <soc/oppo/oppo_project.h>
 #include <soc/oppo/boot_mode.h>
-#include <soc/oppo/mmkey_log.h>
 #include "mdss_dsi.h"
 #include <linux/completion.h>
 static int boot_mode = 0;
@@ -6536,13 +6535,6 @@ void mdss_fb_report_panel_dead(struct msm_fb_data_type *mfd)
 		pr_err("Panel data not available\n");
 		return;
 	}
-
-#ifdef VENDOR_EDIT
-//Shengjun.Gou@PSW.MM.Display.LCD.Stability, 2017/03/08,
-//add for backlight key log
-		mm_keylog_write("mdss lcd exception\n", "mdss report lcd panel dead\n", TYPE_ESD_EXCEPTION);
-#endif /*VENDOR_EDIT*/
-
 
 	pdata->panel_info.panel_dead = true;
 	kobject_uevent_env(&mfd->fbi->dev->kobj,

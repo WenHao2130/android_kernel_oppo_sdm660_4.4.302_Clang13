@@ -886,3 +886,13 @@ CONFIG_CRYPTO_MANAGER2=y
 #/* Kui.Zhang@PSW.BSP.Kernel.Performance, 2018-11-07, add process reclaim.*/
 CONFIG_PROCESS_RECLAIM=y
 #endif
+
+#ifdef VENDOR_EDIT
+#/* Amktiao add pstore ramoops. */
+CONFIG_PSTORE=y
+CONFIG_PSTORE_RAM=y
+CONFIG_PSTORE_CONSOLE=y
+CONFIG_PSTORE_PMSG=y
+CONFIG_CMDLINE="ramoops_memreserve=4M"
+CONFIG_CMDLINE_EXTEND=y
+#endif

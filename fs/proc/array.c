@@ -445,9 +445,21 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	mm = get_task_mm(task);
 	if (mm) {
 		vsize = task_vsize(mm);
-		if (permitted) {
-			eip = KSTK_EIP(task);
-			esp = KSTK_ESP(task);
+		/*
+		 * esp and eip are intentionally zeroed out.  There is no
+		 * non-racy way to read them without freezing the task.
+		 * Programs that need reliable values can use ptrace(2).
+		 *
+		 * The only exception is if the task is core dumping because
+		 * a program is not able to use ptrace(2) in that case. It is
+		 * safe because the task has stopped executing permanently.
+		 */
+		if (permitted && (task->flags & (PF_EXITING|PF_DUMPCORE))) {
+			if (try_get_task_stack(task)) {
+				eip = KSTK_EIP(task);
+				esp = KSTK_ESP(task);
+				put_task_stack(task);
+			}
 		}
 	}
 
@@ -518,41 +530,41 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	start_time = nsec_to_clock_t(task->real_start_time);
 
 	seq_printf(m, "%d (%s) %c", pid_nr_ns(pid, ns), tcomm, state);
-	seq_put_decimal_ll(m, ' ', ppid);
-	seq_put_decimal_ll(m, ' ', pgid);
-	seq_put_decimal_ll(m, ' ', sid);
-	seq_put_decimal_ll(m, ' ', tty_nr);
-	seq_put_decimal_ll(m, ' ', tty_pgrp);
-	seq_put_decimal_ull(m, ' ', task->flags);
-	seq_put_decimal_ull(m, ' ', min_flt);
-	seq_put_decimal_ull(m, ' ', cmin_flt);
-	seq_put_decimal_ull(m, ' ', maj_flt);
-	seq_put_decimal_ull(m, ' ', cmaj_flt);
-	seq_put_decimal_ull(m, ' ', cputime_to_clock_t(utime));
-	seq_put_decimal_ull(m, ' ', cputime_to_clock_t(stime));
-	seq_put_decimal_ll(m, ' ', cputime_to_clock_t(cutime));
-	seq_put_decimal_ll(m, ' ', cputime_to_clock_t(cstime));
-	seq_put_decimal_ll(m, ' ', priority);
-	seq_put_decimal_ll(m, ' ', nice);
-	seq_put_decimal_ll(m, ' ', num_threads);
-	seq_put_decimal_ull(m, ' ', 0);
-	seq_put_decimal_ull(m, ' ', start_time);
-	seq_put_decimal_ull(m, ' ', vsize);
-	seq_put_decimal_ull(m, ' ', mm ? get_mm_rss(mm) : 0);
-	seq_put_decimal_ull(m, ' ', rsslim);
-	seq_put_decimal_ull(m, ' ', mm ? (permitted ? mm->start_code : 1) : 0);
-	seq_put_decimal_ull(m, ' ', mm ? (permitted ? mm->end_code : 1) : 0);
-	seq_put_decimal_ull(m, ' ', (permitted && mm) ? mm->start_stack : 0);
-	seq_put_decimal_ull(m, ' ', esp);
-	seq_put_decimal_ull(m, ' ', eip);
+	seq_put_decimal_ll(m, " ", ppid);
+	seq_put_decimal_ll(m, " ", pgid);
+	seq_put_decimal_ll(m, " ", sid);
+	seq_put_decimal_ll(m, " ", tty_nr);
+	seq_put_decimal_ll(m, " ", tty_pgrp);
+	seq_put_decimal_ull(m, " ", task->flags);
+	seq_put_decimal_ull(m, " ", min_flt);
+	seq_put_decimal_ull(m, " ", cmin_flt);
+	seq_put_decimal_ull(m, " ", maj_flt);
+	seq_put_decimal_ull(m, " ", cmaj_flt);
+	seq_put_decimal_ull(m, " ", cputime_to_clock_t(utime));
+	seq_put_decimal_ull(m, " ", cputime_to_clock_t(stime));
+	seq_put_decimal_ll(m, " ", cputime_to_clock_t(cutime));
+	seq_put_decimal_ll(m, " ", cputime_to_clock_t(cstime));
+	seq_put_decimal_ll(m, " ", priority);
+	seq_put_decimal_ll(m, " ", nice);
+	seq_put_decimal_ll(m, " ", num_threads);
+	seq_put_decimal_ull(m, " ", 0);
+	seq_put_decimal_ull(m, " ", start_time);
+	seq_put_decimal_ull(m, " ", vsize);
+	seq_put_decimal_ull(m, " ", mm ? get_mm_rss(mm) : 0);
+	seq_put_decimal_ull(m, " ", rsslim);
+	seq_put_decimal_ull(m, " ", mm ? (permitted ? mm->start_code : 1) : 0);
+	seq_put_decimal_ull(m, " ", mm ? (permitted ? mm->end_code : 1) : 0);
+	seq_put_decimal_ull(m, " ", (permitted && mm) ? mm->start_stack : 0);
+	seq_put_decimal_ull(m, " ", esp);
+	seq_put_decimal_ull(m, " ", eip);
 	/* The signal information here is obsolete.
 	 * It must be decimal for Linux 2.0 compatibility.
 	 * Use /proc/#/status for real-time signals.
 	 */
-	seq_put_decimal_ull(m, ' ', task->pending.signal.sig[0] & 0x7fffffffUL);
-	seq_put_decimal_ull(m, ' ', task->blocked.sig[0] & 0x7fffffffUL);
-	seq_put_decimal_ull(m, ' ', sigign.sig[0] & 0x7fffffffUL);
-	seq_put_decimal_ull(m, ' ', sigcatch.sig[0] & 0x7fffffffUL);
+	seq_put_decimal_ull(m, " ", task->pending.signal.sig[0] & 0x7fffffffUL);
+	seq_put_decimal_ull(m, " ", task->blocked.sig[0] & 0x7fffffffUL);
+	seq_put_decimal_ull(m, " ", sigign.sig[0] & 0x7fffffffUL);
+	seq_put_decimal_ull(m, " ", sigcatch.sig[0] & 0x7fffffffUL);
 
 	/*
 	 * We used to output the absolute kernel address, but that's an
@@ -566,38 +578,37 @@ static int do_task_stat(struct seq_file *m, struct pid_namespace *ns,
 	else
 		seq_puts(m, " 0");
 
-	seq_put_decimal_ull(m, ' ', 0);
-	seq_put_decimal_ull(m, ' ', 0);
-	seq_put_decimal_ll(m, ' ', task->exit_signal);
-	seq_put_decimal_ll(m, ' ', task_cpu(task));
-	seq_put_decimal_ull(m, ' ', task->rt_priority);
-	seq_put_decimal_ull(m, ' ', task->policy);
-	seq_put_decimal_ull(m, ' ', delayacct_blkio_ticks(task));
-	seq_put_decimal_ull(m, ' ', cputime_to_clock_t(gtime));
-	seq_put_decimal_ll(m, ' ', cputime_to_clock_t(cgtime));
+	seq_put_decimal_ull(m, " ", 0);
+	seq_put_decimal_ull(m, " ", 0);
+	seq_put_decimal_ll(m, " ", task->exit_signal);
+	seq_put_decimal_ll(m, " ", task_cpu(task));
+	seq_put_decimal_ull(m, " ", task->rt_priority);
+	seq_put_decimal_ull(m, " ", task->policy);
+	seq_put_decimal_ull(m, " ", delayacct_blkio_ticks(task));
+	seq_put_decimal_ull(m, " ", cputime_to_clock_t(gtime));
+	seq_put_decimal_ll(m, " ", cputime_to_clock_t(cgtime));
 
 	if (mm && permitted) {
-		seq_put_decimal_ull(m, ' ', mm->start_data);
-		seq_put_decimal_ull(m, ' ', mm->end_data);
-		seq_put_decimal_ull(m, ' ', mm->start_brk);
-		seq_put_decimal_ull(m, ' ', mm->arg_start);
-		seq_put_decimal_ull(m, ' ', mm->arg_end);
-		seq_put_decimal_ull(m, ' ', mm->env_start);
-		seq_put_decimal_ull(m, ' ', mm->env_end);
+		seq_put_decimal_ull(m, " ", mm->start_data);
+		seq_put_decimal_ull(m, " ", mm->end_data);
+		seq_put_decimal_ull(m, " ", mm->start_brk);
+		seq_put_decimal_ull(m, " ", mm->arg_start);
+		seq_put_decimal_ull(m, " ", mm->arg_end);
+		seq_put_decimal_ull(m, " ", mm->env_start);
+		seq_put_decimal_ull(m, " ", mm->env_end);
 	} else
-		seq_printf(m, " 0 0 0 0 0 0 0");
+		seq_puts(m, " 0 0 0 0 0 0 0");
 
 	if (permitted)
-		seq_put_decimal_ll(m, ' ', task->exit_code);
+		seq_put_decimal_ll(m, " ", task->exit_code);
 	else
-		seq_put_decimal_ll(m, ' ', 0);
+		seq_puts(m, " 0");
 
 	seq_putc(m, '\n');
 	if (mm)
 		mmput(mm);
 	return 0;
 }
-
 int proc_tid_stat(struct seq_file *m, struct pid_namespace *ns,
 			struct pid *pid, struct task_struct *task)
 {
@@ -626,13 +637,13 @@ int proc_pid_statm(struct seq_file *m, struct pid_namespace *ns,
 	 * seq_printf(m, "%lu %lu %lu %lu 0 %lu 0\n",
 	 *               size, resident, shared, text, data);
 	 */
-	seq_put_decimal_ull(m, 0, size);
-	seq_put_decimal_ull(m, ' ', resident);
-	seq_put_decimal_ull(m, ' ', shared);
-	seq_put_decimal_ull(m, ' ', text);
-	seq_put_decimal_ull(m, ' ', 0);
-	seq_put_decimal_ull(m, ' ', data);
-	seq_put_decimal_ull(m, ' ', 0);
+	seq_put_decimal_ull(m, "", size);
+	seq_put_decimal_ull(m, " ", resident);
+	seq_put_decimal_ull(m, " ", shared);
+	seq_put_decimal_ull(m, " ", text);
+	seq_put_decimal_ull(m, " ", 0);
+	seq_put_decimal_ull(m, " ", data);
+	seq_put_decimal_ull(m, " ", 0);
 	seq_putc(m, '\n');
 
 	return 0;

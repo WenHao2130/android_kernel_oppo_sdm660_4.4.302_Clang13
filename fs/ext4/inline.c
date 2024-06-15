@@ -873,7 +873,7 @@ int ext4_da_write_inline_data_begin(struct address_space *mapping,
 	handle_t *handle;
 	struct page *page;
 	struct ext4_iloc iloc;
-	int retries;
+	int retries = 0;
 
 	ret = ext4_get_inode_loc(inode, &iloc);
 	if (ret)
@@ -1878,7 +1878,6 @@ out:
 	up_read(&EXT4_I(inode)->xattr_sem);
 	return (error < 0 ? error : 0);
 }
-
 
 void ext4_inline_data_truncate(struct inode *inode, int *has_inline)
 {

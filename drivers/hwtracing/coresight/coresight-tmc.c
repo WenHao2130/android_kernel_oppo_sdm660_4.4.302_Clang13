@@ -1446,15 +1446,6 @@ static int tmc_etr_bam_init(struct amba_device *adev,
 	return sps_register_bam_device(&bamdata->props, &bamdata->handle);
 }
 
-static void tmc_etr_bam_exit(struct tmc_drvdata *drvdata)
-{
-	struct tmc_etr_bam_data *bamdata = drvdata->bamdata;
-
-	if (!bamdata->handle)
-		return;
-	sps_deregister_bam_device(bamdata->handle);
-}
-
 static const struct file_operations tmc_fops = {
 	.owner		= THIS_MODULE,
 	.open		= tmc_open,

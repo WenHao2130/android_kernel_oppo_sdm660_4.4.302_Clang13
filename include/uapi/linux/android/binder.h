@@ -325,6 +325,11 @@ struct binder_transaction_data_secctx {
 	binder_uintptr_t secctx;
 };
 
+struct binder_transaction_data_secctx {
+	struct binder_transaction_data transaction_data;
+	binder_uintptr_t secctx;
+};
+
 struct binder_transaction_data_sg {
 
 	struct binder_transaction_data transaction_data;

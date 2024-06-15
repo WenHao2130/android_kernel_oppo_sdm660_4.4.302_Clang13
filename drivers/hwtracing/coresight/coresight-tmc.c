@@ -2000,19 +2000,6 @@ err_misc_register:
 	return ret;
 }
 
-static int tmc_remove(struct amba_device *adev)
-{
-	struct tmc_drvdata *drvdata = amba_get_drvdata(adev);
-
-	misc_deregister(&drvdata->miscdev);
-	coresight_unregister(drvdata->csdev);
-	if (drvdata->config_type == TMC_CONFIG_TYPE_ETR)
-		tmc_etr_free_mem(drvdata);
-	tmc_etr_bam_exit(drvdata);
-
-	return 0;
-}
-
 static struct amba_id tmc_ids[] = {
 	{
 		.id     = 0x0003b961,

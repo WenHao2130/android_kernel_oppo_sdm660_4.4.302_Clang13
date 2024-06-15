@@ -3430,7 +3430,7 @@ void f2fs_wait_on_block_writeback(struct f2fs_sb_info *sbi, block_t blkaddr)
 	}
 }
 
-static void read_compacted_summaries(struct f2fs_sb_info *sbi)
+static int read_compacted_summaries(struct f2fs_sb_info *sbi)
 {
 	struct f2fs_checkpoint *ckpt = F2FS_CKPT(sbi);
 	struct curseg_info *seg_i;
@@ -3492,6 +3492,7 @@ static void read_compacted_summaries(struct f2fs_sb_info *sbi)
 		}
 	}
 	f2fs_put_page(page, 1);
+	return 0;
 }
 
 static int read_normal_summaries(struct f2fs_sb_info *sbi, int type)

@@ -98,7 +98,7 @@ struct nf_conn {
 	possible_net_t ct_net;
 
 	/* all members below initialized via memset */
-	u8 __nfct_init_offset[0];
+	struct { } __nfct_init_offset;
 
 	//#ifdef VENDOR_EDIT
 	//Junyuan.Huang@PSW.CN.WiFi.Network.internet.1197891, 2018/04/10,

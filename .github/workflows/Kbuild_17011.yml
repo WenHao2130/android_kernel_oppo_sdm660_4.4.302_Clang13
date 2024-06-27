@@ -27,7 +27,7 @@ jobs:
 
       - name: Get Kernel souce
         run: |
-          git clone https://github.com/WenHao2130/android_kernel_oppo_sdm660/ -b master --depth 1 $GITHUB_WORKSPACE/workdir/source
+          git clone --recursive https://github.com/WenHao2130/android_kernel_oppo_sdm660/ -b master $GITHUB_WORKSPACE/workdir/source
 
       - name: Build OPPO R11s Kernel
         run: |

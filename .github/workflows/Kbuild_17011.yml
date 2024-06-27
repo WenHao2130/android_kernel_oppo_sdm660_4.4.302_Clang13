@@ -9,6 +9,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
 
+      - name: Get branch names.
+        id: branch-names
+        uses: tj-actions/branch-names@v8
+
       - name: Set SWAP to 5GiB
         uses: pierotofy/set-swap-space@master
         with:
@@ -27,7 +31,7 @@ jobs:
 
       - name: Get Kernel souce
         run: |
-          git clone --recursive https://github.com/WenHao2130/android_kernel_oppo_sdm660/ -b master $GITHUB_WORKSPACE/workdir/source
+          git clone --recursive https://github.com/WenHao2130/android_kernel_oppo_sdm660/ -b ${{ steps.branch-names.outputs.current_branch }} $GITHUB_WORKSPACE/workdir/source
 
       - name: Build OPPO R11s Kernel
         run: |

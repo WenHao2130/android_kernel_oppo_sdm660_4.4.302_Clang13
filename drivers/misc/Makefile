@@ -71,3 +71,8 @@ obj-$(CONFIG_MEMORY_STATE_TIME) += memory_state_time.o
 #ifdef VENDOR_EDIT
 obj-y		+= schedx.o
 #endif
+
+# TODO: remove me b/62057517
+subdir-ccflags-y += \
+	-Wno-ignored-attributes \
+	-Wno-header-guard

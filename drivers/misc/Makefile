@@ -65,6 +65,7 @@ obj-$(CONFIG_CXL_BASE)		+= cxl/
 obj-$(CONFIG_UID_SYS_STATS) += uid_sys_stats.o
 obj-y				+= qcom/
 obj-$(CONFIG_QPNP_MISC) 	+= qpnp-misc.o
+obj-$(CONFIG_FORCE_FAST_CHARGE) += fastchg.o
 obj-$(CONFIG_MEMORY_STATE_TIME) += memory_state_time.o
 # Mengmeng.Wang@SRC.System, 2018/08/28, Add for oiface
 #ifdef VENDOR_EDIT

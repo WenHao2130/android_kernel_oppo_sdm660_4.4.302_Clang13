@@ -25,9 +25,9 @@ jobs:
           mkdir -p $GITHUB_WORKSPACE/workdir
           cd $GITHUB_WORKSPACE/workdir
 
-      - name: Get gcc toolchain
+      - name: Get proton-clang13 toolchain
         run: |
-          git clone https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9 -b android-9.0.0_r61 --depth=1 $GITHUB_WORKSPACE/workdir/gcc
+          git clone https://github.com/kdrag0n/proton-clang.git -b 20210522 --depth 1 $GITHUB_WORKSPACE/workdir/clang
 
       - name: Get Kernel souce
         run: |
@@ -39,11 +39,12 @@ jobs:
           export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
           export ARCH="arm64"
           export SUBARCH="arm64"
-          export CROSS_COMPILE="$GITHUB_WORKSPACE/workdir/gcc/bin/aarch64-linux-android-"
+          export PATH="$GITHUB_WORKSPACE/workdir/clang/bin/:$PATH"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
           cd $GITHUB_WORKSPACE/workdir/source
           export OPPO_TARGET_DEVICE="MSM_16051"
-          make O=out sdm660-perf_defconfig
-          make -j$(nproc --all) O=out
+          make O=out sdm660-perf_defconfig CC=clang
+          make -j$(nproc --all) O=out CC=clang
 
       - name: Check a kernel output files
         run: |
@@ -88,11 +89,12 @@ jobs:
           export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
           export ARCH="arm64"
           export SUBARCH="arm64"
-          export CROSS_COMPILE="$GITHUB_WORKSPACE/workdir/gcc/bin/aarch64-linux-android-"
+          export PATH="$GITHUB_WORKSPACE/workdir/clang/bin/:$PATH"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
           cd $GITHUB_WORKSPACE/workdir/source
           export OPPO_TARGET_DEVICE="MSM_17011"
-          make O=out sdm660-perf_defconfig
-          make -j$(nproc --all) O=out
+          make O=out sdm660-perf_defconfig CC=clang
+          make -j$(nproc --all) O=out CC=clang
   
       - name: Check a kernel output files
         run: |

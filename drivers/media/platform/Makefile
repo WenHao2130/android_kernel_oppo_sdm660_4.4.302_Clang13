@@ -56,3 +56,7 @@ obj-$(CONFIG_VIDEO_XILINX)		+= xilinx/
 
 ccflags-y += -I$(srctree)/drivers/media/i2c
 obj-y	+= msm/
+
+# TODO: remove me b/62057517
+subdir-ccflags-y += \
+	-Wno-parentheses-equality

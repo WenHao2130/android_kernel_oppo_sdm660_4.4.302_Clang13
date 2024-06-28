@@ -7100,8 +7100,8 @@ static int32_t qdsp_cvp_callback(struct apr_client_data *data, void *priv)
 				break;
 			}
 		}
-	} else if ((data->opcode == VSS_ICOMMON_RSP_GET_PARAM) ||
-		   (data->opcode == VSS_ICOMMON_RSP_GET_PARAM_V3)) {
+	} else if (data->opcode == VSS_ICOMMON_RSP_GET_PARAM ||
+		   data->opcode == VSS_ICOMMON_RSP_GET_PARAM_V3) {
 		pr_debug("%s: VSS_ICOMMON_RSP_GET_PARAM\n", __func__);
 		ptr = data->payload;
 		if (ptr[0] != 0) {

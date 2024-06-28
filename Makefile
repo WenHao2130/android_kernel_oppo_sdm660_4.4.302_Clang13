@@ -391,9 +391,23 @@ KBUILD_CFLAGS   := -Wall -Wundef -Wstrict-prototypes -Wno-trigraphs \
 		   -Wno-format-security \
 		   -std=gnu89 $(call cc-option,-fno-PIE)
 
+# TODO: remove me b/62057517
+KBUILD_CFLAGS += \
+	-Wno-address-of-packed-member \
+	-Wno-unneeded-internal-declaration \
+	-Wno-enum-conversion \
+	-Wno-section \
+	-Wno-duplicate-decl-specifier \
+	-Wno-array-bounds \
+	-Wno-logical-not-parentheses \
+	-Wno-constant-conversion \
+	-Wno-parentheses-equality \
+	-Wno-gcc-compat \
+
 ifeq ($(TARGET_BOARD_TYPE),auto)
 KBUILD_CFLAGS    += -DCONFIG_PLATFORM_AUTO
 endif
+
 KBUILD_AFLAGS_KERNEL :=
 KBUILD_CFLAGS_KERNEL :=
 KBUILD_AFLAGS   := -D__ASSEMBLY__ $(call cc-option,-fno-PIE)
@@ -767,7 +781,13 @@ else
 ifdef CONFIG_PROFILE_ALL_BRANCHES
 KBUILD_CFLAGS	+= -O2
 else
+ifeq ($(cc-name),gcc)
 KBUILD_CFLAGS   += -O2
+endif
+ifeq ($(cc-name),clang)
+KBUILD_CFLAGS   += -O3
+KBUILD_CFLAGS	+= -mcpu=cortex-a73 -mtune=cortex-a73
+endif
 endif
 endif
 

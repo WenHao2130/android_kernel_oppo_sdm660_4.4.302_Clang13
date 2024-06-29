@@ -24,6 +24,7 @@ jobs:
           sudo apt-get install git automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
           mkdir -p $GITHUB_WORKSPACE/workdir
           cd $GITHUB_WORKSPACE/workdir
+          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
 
       - name: Get proton-clang13 toolchain
         run: |
@@ -67,14 +68,14 @@ jobs:
         if: env.CHECK_FILE_IS_OK == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: android_kernel_oppo_sdm660_16051_Image.gz-dtb
+          name: android_kernel_oppo_sdm660_16051_${{ env.BUILD_TIME }}_Image.gz-dtb
           path: workdir/source/out/arch/arm64/boot/Image.gz-dtb
 
       - name: Upload OPPO R11 AnyKernel3
         if: env.CHECK_FILE_IS_OK == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_oppo_sdm660_16051
+          name: AnyKernel3_oppo_sdm660_16051_${{ env.BUILD_TIME }}
           path: workdir/ak3/*
 
       - name: Clean up compilation environment
@@ -115,12 +116,12 @@ jobs:
         if: env.CHECK_FILE_IS_OK == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: android_kernel_oppo_sdm660_17011_Image.gz-dtb
+          name: android_kernel_oppo_sdm660_17011_${{ env.BUILD_TIME }}_Image.gz-dtb
           path: workdir/source/out/arch/arm64/boot/Image.gz-dtb
 
       - name: Upload OPPO R11s AnyKernel3
         if: env.CHECK_FILE_IS_OK == 'true'
         uses: actions/upload-artifact@v4
         with:
-          name: AnyKernel3_oppo_sdm660_17011
+          name: AnyKernel3_oppo_sdm660_17011_${{ env.BUILD_TIME }}
           path: workdir/ak3/*

@@ -31,7 +31,7 @@ jobs:
 
       - name: Get Kernel souce
         run: |
-          git clone --recursive https://github.com/WenHao2130/android_kernel_oppo_sdm660/ -b ${{ steps.branch-names.outputs.current_branch }} $GITHUB_WORKSPACE/workdir/source
+          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch-names.outputs.current_branch }} $GITHUB_WORKSPACE/workdir/source
 
       - name: Build OPPO R11 Kernel
         run: |
@@ -59,7 +59,7 @@ jobs:
       - name: Make OPPO R11 Anykernel3
         if: env.CHECK_FILE_IS_OK == 'true'
         run: |
-          git clone https://github.com/WenHao2130/android_kernel_oppo_sdm660/ -b prebuilt_ak3 --depth 1 $GITHUB_WORKSPACE/workdir/ak3
+          git clone https://github.com/$GITHUB_REPOSITORY/ -b prebuilt_ak3 --depth 1 $GITHUB_WORKSPACE/workdir/ak3
           rm -r $GITHUB_WORKSPACE/workdir/ak3/.git
           cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3
 

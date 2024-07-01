@@ -1,0 +1,79 @@
+name: Only Build OPPO R15x/K1 Kernel and AnyKernel3
+on:
+
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Only Build OPPO R15x/K1 Kernel by ${{ github.actor }}
+    runs-on: ubuntu-latest
+    steps:
+
+      - name: Get branch names.
+        id: branch-names
+        uses: tj-actions/branch-names@v8
+
+      - name: Set SWAP to 5GiB
+        uses: pierotofy/set-swap-space@master
+        with:
+          swap-size-gb: 5
+
+      - name: Initialize compilation environment
+        run: |
+          sudo apt-get update
+          sudo apt-get install git automake flex lzop bison gperf build-essential zip curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python2 python3
+          mkdir -p $GITHUB_WORKSPACE/workdir
+          cd $GITHUB_WORKSPACE/workdir
+          echo "BUILD_TIME=$(TZ=Asia/Shanghai date "+%Y%m%d%H%M")" >> $GITHUB_ENV
+
+      - name: Get proton-clang13 toolchain
+        run: |
+          git clone https://github.com/kdrag0n/proton-clang.git -b 20210522 --depth 1 $GITHUB_WORKSPACE/workdir/clang
+
+      - name: Get Kernel souce
+        run: |
+          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch-names.outputs.current_branch }} $GITHUB_WORKSPACE/workdir/source
+
+      - name: Build OPPO R15x/K1 Kernel
+        run: |
+          export KBUILD_BUILD_HOST=Github-Action
+          export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
+          export ARCH="arm64"
+          export SUBARCH="arm64"
+          export PATH="$GITHUB_WORKSPACE/workdir/clang/bin/:$PATH"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          cd $GITHUB_WORKSPACE/workdir/source
+          export OPPO_TARGET_DEVICE="MSM_18005"
+          make O=out sdm660-perf_defconfig CC=clang
+          make -j$(nproc --all) O=out CC=clang
+
+      - name: Check a kernel output files
+        run: |
+          cd $GITHUB_WORKSPACE/workdir/source
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "CHECK_FILE_IS_OK=true" >> $GITHUB_ENV
+          else
+              echo "Kernel output file is empty"
+              exit 1
+          fi
+
+      - name: Make OPPO R15x/K1 Anykernel3
+        if: env.CHECK_FILE_IS_OK == 'true'
+        run: |
+          git clone https://github.com/$GITHUB_REPOSITORY/ -b prebuilt_ak3 --depth 1 $GITHUB_WORKSPACE/workdir/ak3
+          rm -r $GITHUB_WORKSPACE/workdir/ak3/.git
+          cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3
+
+      - name: Upload OPPO R15x/K1 Kernel
+        if: env.CHECK_FILE_IS_OK == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android_kernel_oppo_sdm660_18005_${{ env.BUILD_TIME }}_Image.gz-dtb
+          path: workdir/source/out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Upload OPPO R15x/K1 AnyKernel3
+        if: env.CHECK_FILE_IS_OK == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3_oppo_sdm660_18005_${{ env.BUILD_TIME }}
+          path: workdir/ak3/*

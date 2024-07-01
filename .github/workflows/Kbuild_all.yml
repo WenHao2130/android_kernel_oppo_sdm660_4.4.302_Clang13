@@ -1,4 +1,4 @@
-name: Build OPPO R11/s Kernel and AnyKernel3
+name: Build OPPO R11/R11s/R15x/K1 Kernel and AnyKernel3
 on:
 
   workflow_dispatch:
@@ -124,4 +124,52 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: AnyKernel3_oppo_sdm660_17011_${{ env.BUILD_TIME }}
+          path: workdir/ak3/*
+
+      - name: Clean up compilation environment
+        run: |
+          rm -r $GITHUB_WORKSPACE/workdir/source/out
+          rm $GITHUB_WORKSPACE/workdir/ak3/Image.gz-dtb
+          echo "CHECK_FILE_IS_OK=false" >> $GITHUB_ENV
+
+      - name: Build OPPO R15x/K1 Kernel
+        run: |
+          export KBUILD_BUILD_HOST=Github-Action
+          export KBUILD_BUILD_USER=$(echo ${{ github.actor }} | tr A-Z a-z)
+          export ARCH="arm64"
+          export SUBARCH="arm64"
+          export PATH="$GITHUB_WORKSPACE/workdir/clang/bin/:$PATH"
+          export CROSS_COMPILE="aarch64-linux-gnu-"
+          cd $GITHUB_WORKSPACE/workdir/source
+          export OPPO_TARGET_DEVICE="MSM_18005"
+          make O=out sdm660-perf_defconfig CC=clang
+          make -j$(nproc --all) O=out CC=clang
+  
+      - name: Check a kernel output files
+        run: |
+          cd $GITHUB_WORKSPACE/workdir/source
+          if [ -f out/arch/arm64/boot/Image.gz-dtb ]; then
+              echo "CHECK_FILE_IS_OK=true" >> $GITHUB_ENV
+          else
+              echo "Kernel output file is empty"
+              exit 1
+          fi
+
+      - name: Make OPPO R15x/K1 Anykernel3
+        if: env.CHECK_FILE_IS_OK == 'true'
+        run: |
+          cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3
+
+      - name: Upload OPPO R15x/K1 Kernel
+        if: env.CHECK_FILE_IS_OK == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: android_kernel_oppo_sdm660_18005_${{ env.BUILD_TIME }}_Image.gz-dtb
+          path: workdir/source/out/arch/arm64/boot/Image.gz-dtb
+
+      - name: Upload OPPO R15x/K1 AnyKernel3
+        if: env.CHECK_FILE_IS_OK == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: AnyKernel3_oppo_sdm660_18005_${{ env.BUILD_TIME }}
           path: workdir/ak3/*

@@ -1,4 +1,4 @@
-/*  Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
+/*  Copyright (c) 2012-2018, 2020, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -7101,7 +7101,7 @@ static int32_t qdsp_cvp_callback(struct apr_client_data *data, void *priv)
 			}
 		}
 	} else if (data->opcode == VSS_ICOMMON_RSP_GET_PARAM ||
-		   VSS_ICOMMON_RSP_GET_PARAM_V3) {
+		   data->opcode == VSS_ICOMMON_RSP_GET_PARAM_V3) {
 		pr_debug("%s: VSS_ICOMMON_RSP_GET_PARAM\n", __func__);
 		ptr = data->payload;
 		if (ptr[0] != 0) {

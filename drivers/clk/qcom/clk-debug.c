@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2013-2014, 2016-2017,
+ * Copyright (c) 2013-2014, 2016-2017, 2020,
  *
  * The Linux Foundation. All rights reserved.
  *
@@ -179,7 +179,7 @@ static int clk_debug_mux_set_parent(struct clk_hw *hw, u8 index)
 
 		if (meas->parent[index].en_mask == 0xFF)
 			/* Skip en_mask */
-			regval = regval;
+			regval = (u32) regval;
 		else if (meas->parent[index].en_mask)
 			regval |= meas->parent[index].en_mask;
 		else

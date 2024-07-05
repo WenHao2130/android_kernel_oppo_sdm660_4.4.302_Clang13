@@ -3,9 +3,9 @@ on:
   workflow_dispatch:
 
 jobs:
-  r11:
+  R11:
     uses: ./.github/workflows/Kbuild_16051.yml
-  r11s:
+  R11s:
     uses: ./.github/workflows/Kbuild_17011.yml
-  r15x-k1:
+  R15x-K1:
     uses: ./.github/workflows/Kbuild_18005.yml

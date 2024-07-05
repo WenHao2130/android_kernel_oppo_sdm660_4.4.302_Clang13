@@ -32,7 +32,7 @@ jobs:
 
       - name: Get Kernel souce
         run: |
-          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch-names.outputs.current_branch }} $GITHUB_WORKSPACE/workdir/source
+          git clone --recursive https://github.com/$GITHUB_REPOSITORY/ -b ${{ steps.branch-names.outputs.current_branch }} --depth 1 $GITHUB_WORKSPACE/workdir/source
 
       - name: Build OPPO R11 Kernel
         run: |

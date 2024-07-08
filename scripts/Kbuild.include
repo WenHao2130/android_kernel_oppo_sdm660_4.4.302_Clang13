@@ -179,13 +179,6 @@ clang-ifversion =  $(call __cc-ifversion, clang, $(1), $(2), $(3), $(4))
 # clang-if-fullversion
 clang-if-fullversion = (call __cc-if-fullversion, clang, $(1), $(2), $(3), $(4))
 
-# cc-version
-cc-version = $(shell $(CONFIG_SHELL) $(srctree)/scripts/gcc-version.sh $(CC))
-
-# cc-fullversion
-cc-fullversion = $(shell $(CONFIG_SHELL) \
-	$(srctree)/scripts/gcc-version.sh -p $(CC))
-
 # backward compatibility
 cc-ifversion = $(gcc-ifversion)
 cc-if-fullversion = $(gcc-if-fullversion)

@@ -113,8 +113,6 @@ enum ep0_state {
 /* enough for the whole queue: most events invalidate others */
 #define	N_EVENT			5
 
-#define RBUF_SIZE		256
-
 struct dev_data {
 	spinlock_t			lock;
 	atomic_t			count;
@@ -148,7 +146,7 @@ struct dev_data {
 	struct dentry			*dentry;
 
 	/* except this scratch i/o buffer for ep0 */
-	u8				rbuf[RBUF_SIZE];
+	u8				rbuf [256];
 };
 
 static inline void get_dev (struct dev_data *data)
@@ -1334,18 +1332,6 @@ gadgetfs_setup (struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 	u16				w_value = le16_to_cpu(ctrl->wValue);
 	u16				w_length = le16_to_cpu(ctrl->wLength);
 
-	if (w_length > RBUF_SIZE) {
-		if (ctrl->bRequestType & USB_DIR_IN) {
-			/* Cast away the const, we are going to overwrite on purpose. */
-			__le16 *temp = (__le16 *)&ctrl->wLength;
-
-			*temp = cpu_to_le16(RBUF_SIZE);
-			w_length = RBUF_SIZE;
-		} else {
-			return value;
-		}
-	}
-
 	spin_lock (&dev->lock);
 	dev->setup_abort = 0;
 	if (dev->state == STATE_DEV_UNCONNECTED) {
@@ -1374,6 +1360,7 @@ gadgetfs_setup (struct usb_gadget *gadget, const struct usb_ctrlrequest *ctrl)
 
 	req->buf = dev->rbuf;
 	req->context = NULL;
+	value = -EOPNOTSUPP;
 	switch (ctrl->bRequest) {
 
 	case USB_REQ_GET_DESCRIPTOR:
@@ -1819,7 +1806,7 @@ static ssize_t
 dev_config (struct file *fd, const char __user *buf, size_t len, loff_t *ptr)
 {
 	struct dev_data		*dev = fd->private_data;
-	ssize_t			value, length = len;
+	ssize_t			value = len, length = len;
 	unsigned		total;
 	u32			tag;
 	char			*kbuf;

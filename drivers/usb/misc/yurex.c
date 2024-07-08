@@ -64,7 +64,6 @@ struct usb_yurex {
 
 	struct kref		kref;
 	struct mutex		io_mutex;
-	unsigned long		disconnected:1;
 	struct fasync_struct	*async_queue;
 	wait_queue_head_t	waitq;
 
@@ -97,6 +96,7 @@ static void yurex_delete(struct kref *kref)
 
 	dev_dbg(&dev->interface->dev, "%s\n", __func__);
 
+	usb_put_dev(dev->udev);
 	if (dev->cntl_urb) {
 		usb_kill_urb(dev->cntl_urb);
 		kfree(dev->cntl_req);
@@ -112,8 +112,6 @@ static void yurex_delete(struct kref *kref)
 				dev->int_buffer, dev->urb->transfer_dma);
 		usb_free_urb(dev->urb);
 	}
-	usb_put_intf(dev->interface);
-	usb_put_dev(dev->udev);
 	kfree(dev);
 }
 
@@ -138,7 +136,6 @@ static void yurex_interrupt(struct urb *urb)
 	switch (status) {
 	case 0: /*success*/
 		break;
-	/* The device is terminated or messed up, give up */
 	case -EOVERFLOW:
 		dev_err(&dev->interface->dev,
 			"%s - overflow with length %d, actual length is %d\n",
@@ -147,13 +144,12 @@ static void yurex_interrupt(struct urb *urb)
 	case -ENOENT:
 	case -ESHUTDOWN:
 	case -EILSEQ:
-	case -EPROTO:
-	case -ETIME:
+		/* The device is terminated, clean up */
 		return;
 	default:
 		dev_err(&dev->interface->dev,
 			"%s - unknown status received: %d\n", __func__, status);
-		return;
+		goto exit;
 	}
 
 	/* handle received message */
@@ -185,6 +181,7 @@ static void yurex_interrupt(struct urb *urb)
 		break;
 	}
 
+exit:
 	retval = usb_submit_urb(dev->urb, GFP_ATOMIC);
 	if (retval) {
 		dev_err(&dev->interface->dev, "%s - usb_submit_urb failed: %d\n",
@@ -213,7 +210,7 @@ static int yurex_probe(struct usb_interface *interface, const struct usb_device_
 	init_waitqueue_head(&dev->waitq);
 
 	dev->udev = usb_get_dev(interface_to_usbdev(interface));
-	dev->interface = usb_get_intf(interface);
+	dev->interface = interface;
 
 	/* set up the endpoint information */
 	iface_desc = interface->cur_altsetting;
@@ -335,10 +332,8 @@ static void yurex_disconnect(struct usb_interface *interface)
 	usb_deregister_dev(interface, &yurex_class);
 
 	/* prevent more I/O from starting */
-	usb_poison_urb(dev->urb);
-	usb_poison_urb(dev->cntl_urb);
 	mutex_lock(&dev->io_mutex);
-	dev->disconnected = 1;
+	dev->interface = NULL;
 	mutex_unlock(&dev->io_mutex);
 
 	/* wakeup waiters */
@@ -426,7 +421,7 @@ static ssize_t yurex_read(struct file *file, char __user *buffer, size_t count,
 	dev = file->private_data;
 
 	mutex_lock(&dev->io_mutex);
-	if (dev->disconnected) {		/* already disconnected */
+	if (!dev->interface) {		/* already disconnected */
 		mutex_unlock(&dev->io_mutex);
 		return -ENODEV;
 	}
@@ -436,9 +431,6 @@ static ssize_t yurex_read(struct file *file, char __user *buffer, size_t count,
 	spin_unlock_irqrestore(&dev->lock, flags);
 	mutex_unlock(&dev->io_mutex);
 
-	if (WARN_ON_ONCE(len >= sizeof(in_buffer)))
-		return -EIO;
-
 	return simple_read_from_buffer(buffer, count, ppos, in_buffer, len);
 }
 
@@ -447,13 +439,13 @@ static ssize_t yurex_write(struct file *file, const char __user *user_buffer,
 {
 	struct usb_yurex *dev;
 	int i, set = 0, retval = 0;
-	char buffer[16 + 1];
+	char buffer[16];
 	char *data = buffer;
 	unsigned long long c, c2 = 0;
 	signed long timeout = 0;
 	DEFINE_WAIT(wait);
 
-	count = min(sizeof(buffer) - 1, count);
+	count = min(sizeof(buffer), count);
 	dev = file->private_data;
 
 	/* verify that we actually have some data to write */
@@ -461,7 +453,7 @@ static ssize_t yurex_write(struct file *file, const char __user *user_buffer,
 		goto error;
 
 	mutex_lock(&dev->io_mutex);
-	if (dev->disconnected) {		/* already disconnected */
+	if (!dev->interface) {		/* already disconnected */
 		mutex_unlock(&dev->io_mutex);
 		retval = -ENODEV;
 		goto error;
@@ -472,7 +464,6 @@ static ssize_t yurex_write(struct file *file, const char __user *user_buffer,
 		retval = -EFAULT;
 		goto error;
 	}
-	buffer[count] = 0;
 	memset(dev->cntl_buffer, CMD_PADDING, YUREX_BUF_SIZE);
 
 	switch (buffer[0]) {
@@ -510,13 +501,10 @@ static ssize_t yurex_write(struct file *file, const char __user *user_buffer,
 	prepare_to_wait(&dev->waitq, &wait, TASK_INTERRUPTIBLE);
 	dev_dbg(&dev->interface->dev, "%s - submit %c\n", __func__,
 		dev->cntl_buffer[0]);
-	retval = usb_submit_urb(dev->cntl_urb, GFP_ATOMIC);
+	retval = usb_submit_urb(dev->cntl_urb, GFP_KERNEL);
 	if (retval >= 0)
 		timeout = schedule_timeout(YUREX_WRITE_TIMEOUT);
 	finish_wait(&dev->waitq, &wait);
-
-	/* make sure URB is idle after timeout or (spurious) CMD_ACK */
-	usb_kill_urb(dev->cntl_urb);
 
 	mutex_unlock(&dev->io_mutex);
 

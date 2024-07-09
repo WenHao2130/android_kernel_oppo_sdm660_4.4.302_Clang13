@@ -27,7 +27,6 @@
 #include <linux/mm_inline.h>
 #include <linux/page_ext.h>
 #include <linux/page_owner.h>
-#include <asm-generic/uaccess.h>
 #include "internal.h"
 
 #ifdef CONFIG_VM_EVENT_COUNTERS
@@ -91,19 +90,6 @@ static int proc_free_area_show(struct seq_file *m, void *p)
    return 0; 
 }
 
-static ssize_t proc_free_area_write(struct file *file, const char __user *buff, size_t len, loff_t *ppos)
-{
-    char write_data[16] = {0};
-    int ret = 0;
-
-    if (copy_from_user(write_data, buff, len)) {
-        return -EFAULT;
-    }
-    ret = kstrtouint(write_data, 10, &show_order);
-
-    return len;
-}
-
 static int proc_free_area_open(struct inode *inode, struct file *file)
 {
     return single_open(file, proc_free_area_show, NULL);
@@ -113,8 +99,7 @@ static const struct file_operations proc_free_area_fops = {
     .open       = proc_free_area_open,
     .read       = seq_read,
     .llseek     = seq_lseek,
-    .release    = single_release,
-    .write      = proc_free_area_write,
+    .release    = single_release
 };
 #endif
 static void sum_vm_events(unsigned long *ret)

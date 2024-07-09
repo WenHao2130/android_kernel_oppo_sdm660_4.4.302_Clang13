@@ -35,9 +35,6 @@ static int __init init_profile_hash(void)
 		AA_ERROR("failed to setup profile sha1 hashing: %d\n", error);
 		return error;
 	}
-	apparmor_tfm = tfm;
-	apparmor_hash_size = crypto_shash_digestsize(apparmor_tfm);
-
 	aa_info_message("AppArmor sha1 policy hashing enabled");
 
 	return 0;

@@ -27,7 +27,6 @@
 #include <linux/mm_inline.h>
 #include <linux/page_ext.h>
 #include <linux/page_owner.h>
-#include <asm-generic/uaccess.h>
 #include "internal.h"
 
 #ifdef CONFIG_VM_EVENT_COUNTERS

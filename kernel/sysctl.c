@@ -174,6 +174,8 @@ static int one_thousand = 1000;
 static int max_freq_reporting_policy = FREQ_REPORT_INVALID_POLICY - 1;
 #endif
 
+static int max_kswapd_threads = MAX_KSWAPD_THREADS;
+
 /* this is needed for the proc_doulongvec_minmax of vm_dirty_bytes */
 static unsigned long dirty_bytes_min = 2 * PAGE_SIZE;
 

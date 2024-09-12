@@ -60,7 +60,7 @@ jobs:
       - name: Make OPPO R11s Anykernel3
         if: env.CHECK_FILE_IS_OK == 'true'
         run: |
-          git clone https://github.com/$GITHUB_REPOSITORY/ -b prebuilt_ak3 --depth 1 $GITHUB_WORKSPACE/workdir/ak3
+          git clone https://github.com/$GITHUB_REPOSITORY/ -b master --depth 1 $GITHUB_WORKSPACE/workdir/ak3
           rm -r $GITHUB_WORKSPACE/workdir/ak3/.git
           cp $GITHUB_WORKSPACE/workdir/source/out/arch/arm64/boot/Image.gz-dtb $GITHUB_WORKSPACE/workdir/ak3
 
